@@ -23,6 +23,26 @@ class Review:
     trip_type: str = ""  # solo, couple, family, friends, group
     scraped_at: str = field(default_factory=lambda: datetime.now().isoformat())
 
+    # Reviewer profile stats
+    reviewer_contributions: int = 0  # Total reviews by this reviewer
+    reviewer_helpful_votes: int = 0  # Total helpful votes received by reviewer
+
+    # Review metadata
+    helpful_votes: int = 0  # Helpful votes on this specific review
+    review_id_source: str = ""  # Original ID from source platform
+
+    # Safari-specific extracted data
+    age_range: str = ""  # e.g., "35-50" years
+    parks_visited: str = "[]"  # JSON list of park names
+    wildlife_sightings: str = "[]"  # JSON list of animals seen
+    guide_names_mentioned: str = "[]"  # JSON list of guide names in text
+    safari_duration_days: Optional[int] = None  # Trip length if mentioned
+
+    # Parsing metadata (for debugging and quality tracking)
+    parsing_confidence: float = 1.0  # 0-1 confidence in parse quality
+    raw_text_block: str = ""  # Original unparsed text block
+    parse_warnings: str = "[]"  # JSON list of parsing issues
+
     def to_dict(self) -> dict:
         return {
             "id": self.id,
@@ -39,11 +59,43 @@ class Review:
             "review_date": self.review_date,
             "trip_type": self.trip_type,
             "scraped_at": self.scraped_at,
+            "reviewer_contributions": self.reviewer_contributions,
+            "reviewer_helpful_votes": self.reviewer_helpful_votes,
+            "helpful_votes": self.helpful_votes,
+            "review_id_source": self.review_id_source,
+            "age_range": self.age_range,
+            "parks_visited": self.parks_visited,
+            "wildlife_sightings": self.wildlife_sightings,
+            "guide_names_mentioned": self.guide_names_mentioned,
+            "safari_duration_days": self.safari_duration_days,
+            "parsing_confidence": self.parsing_confidence,
+            "raw_text_block": self.raw_text_block,
+            "parse_warnings": self.parse_warnings,
         }
 
     @classmethod
     def from_dict(cls, data: dict) -> "Review":
         return cls(**{k: v for k, v in data.items() if k in cls.__dataclass_fields__})
+
+    @property
+    def wildlife_list(self) -> list:
+        """Get wildlife sightings as a list."""
+        return json.loads(self.wildlife_sightings) if self.wildlife_sightings else []
+
+    @property
+    def guide_names_list(self) -> list:
+        """Get guide names as a list."""
+        return json.loads(self.guide_names_mentioned) if self.guide_names_mentioned else []
+
+    @property
+    def parks_list(self) -> list:
+        """Get parks visited as a list."""
+        return json.loads(self.parks_visited) if self.parks_visited else []
+
+    @property
+    def warnings_list(self) -> list:
+        """Get parse warnings as a list."""
+        return json.loads(self.parse_warnings) if self.parse_warnings else []
 
 
 @dataclass

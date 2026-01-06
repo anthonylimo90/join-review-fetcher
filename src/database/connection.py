@@ -45,9 +45,24 @@ class Database:
                     travel_date TEXT,
                     review_date TEXT,
                     trip_type TEXT,
-                    scraped_at TEXT
+                    scraped_at TEXT,
+                    reviewer_contributions INTEGER DEFAULT 0,
+                    reviewer_helpful_votes INTEGER DEFAULT 0,
+                    helpful_votes INTEGER DEFAULT 0,
+                    review_id_source TEXT,
+                    age_range TEXT,
+                    parks_visited TEXT DEFAULT '[]',
+                    wildlife_sightings TEXT DEFAULT '[]',
+                    guide_names_mentioned TEXT DEFAULT '[]',
+                    safari_duration_days INTEGER,
+                    parsing_confidence REAL DEFAULT 1.0,
+                    raw_text_block TEXT,
+                    parse_warnings TEXT DEFAULT '[]'
                 )
             """)
+
+            # Run migration for existing databases
+            self._migrate_db(cursor)
 
             # Guide analysis table
             cursor.execute("""
@@ -100,6 +115,29 @@ class Database:
 
             conn.commit()
 
+    def _migrate_db(self, cursor):
+        """Apply database migrations for new columns on existing databases."""
+        new_columns = [
+            ("reviewer_contributions", "INTEGER DEFAULT 0"),
+            ("reviewer_helpful_votes", "INTEGER DEFAULT 0"),
+            ("helpful_votes", "INTEGER DEFAULT 0"),
+            ("review_id_source", "TEXT"),
+            ("age_range", "TEXT"),
+            ("parks_visited", "TEXT DEFAULT '[]'"),
+            ("wildlife_sightings", "TEXT DEFAULT '[]'"),
+            ("guide_names_mentioned", "TEXT DEFAULT '[]'"),
+            ("safari_duration_days", "INTEGER"),
+            ("parsing_confidence", "REAL DEFAULT 1.0"),
+            ("raw_text_block", "TEXT"),
+            ("parse_warnings", "TEXT DEFAULT '[]'"),
+        ]
+
+        for col_name, col_def in new_columns:
+            try:
+                cursor.execute(f"ALTER TABLE reviews ADD COLUMN {col_name} {col_def}")
+            except sqlite3.OperationalError:
+                pass  # Column already exists
+
     def insert_review(self, review: Review) -> int:
         """Insert a review, returns the ID. Skips if URL already exists."""
         with self._get_connection() as conn:
@@ -109,13 +147,22 @@ class Database:
                     INSERT INTO reviews (
                         source, url, operator_name, reviewer_name, reviewer_location,
                         reviewer_country, rating, title, text, travel_date,
-                        review_date, trip_type, scraped_at
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        review_date, trip_type, scraped_at,
+                        reviewer_contributions, reviewer_helpful_votes, helpful_votes,
+                        review_id_source, age_range, parks_visited, wildlife_sightings,
+                        guide_names_mentioned, safari_duration_days, parsing_confidence,
+                        raw_text_block, parse_warnings
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """, (
                     review.source, review.url, review.operator_name, review.reviewer_name,
                     review.reviewer_location, review.reviewer_country, review.rating,
                     review.title, review.text, review.travel_date, review.review_date,
-                    review.trip_type, review.scraped_at
+                    review.trip_type, review.scraped_at,
+                    review.reviewer_contributions, review.reviewer_helpful_votes,
+                    review.helpful_votes, review.review_id_source, review.age_range,
+                    review.parks_visited, review.wildlife_sightings,
+                    review.guide_names_mentioned, review.safari_duration_days,
+                    review.parsing_confidence, review.raw_text_block, review.parse_warnings
                 ))
                 conn.commit()
                 return cursor.lastrowid

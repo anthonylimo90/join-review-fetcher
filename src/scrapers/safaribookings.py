@@ -1,37 +1,194 @@
-"""Safaribookings.com scraper - Updated with actual website selectors."""
+"""Safaribookings.com scraper - Enhanced with robust parsing and validation."""
 import asyncio
+import json
 import re
-from typing import Optional
+from typing import Optional, AsyncIterator
 from urllib.parse import urljoin
 
 from playwright.async_api import Page, ElementHandle
 
 from .base import BaseScraper
+from .country_codes import COUNTRY_CODES, get_country_name, get_region
+from .validation import ReviewValidator, ParsingErrorTracker, ParseResult
 from ..database.models import Review
 
 
-# Country code to full name mapping
-COUNTRY_CODES = {
-    "US": "United States", "UK": "United Kingdom", "GB": "United Kingdom",
-    "CA": "Canada", "AU": "Australia", "DE": "Germany", "FR": "France",
-    "IT": "Italy", "ES": "Spain", "NL": "Netherlands", "BE": "Belgium",
-    "CH": "Switzerland", "AT": "Austria", "SE": "Sweden", "NO": "Norway",
-    "DK": "Denmark", "FI": "Finland", "IE": "Ireland", "NZ": "New Zealand",
-    "ZA": "South Africa", "KE": "Kenya", "TZ": "Tanzania", "IN": "India",
-    "SG": "Singapore", "JP": "Japan", "CN": "China", "BR": "Brazil",
-    "MX": "Mexico", "AR": "Argentina", "PL": "Poland", "CZ": "Czech Republic",
-    "PT": "Portugal", "GR": "Greece", "HU": "Hungary", "RO": "Romania",
+# Multi-strategy regex patterns for reviewer line parsing
+# Try in order - first match wins, with decreasing confidence
+# Note: Name pattern now requires proper name format (First Last or First L.)
+REVIEWER_PATTERNS = [
+    # Pattern 1: Standard format with en-dash - strict name (First Last format)
+    (r"\n([A-Z][a-z]+(?:\s+[A-Z][a-z\.]+)?)\s+–\s+([A-Z]{2})\s+Visited:\s*(\w+\s+\d{4})\s+Reviewed:\s*([A-Za-z]+\s+\d+,?\s*\d{4})", 1.0),
+    # Pattern 2: Hyphen instead of en-dash
+    (r"\n([A-Z][a-z]+(?:\s+[A-Z][a-z\.]+)?)\s+-\s+([A-Z]{2})\s+Visited:\s*(\w+\s+\d{4})\s+Reviewed:\s*([A-Za-z]+\s+\d+,?\s*\d{4})", 0.95),
+    # Pattern 3: Em-dash
+    (r"\n([A-Z][a-z]+(?:\s+[A-Z][a-z\.]+)?)\s+—\s+([A-Z]{2})\s+Visited:\s*(\w+\s+\d{4})\s+Reviewed:\s*([A-Za-z]+\s+\d+,?\s*\d{4})", 0.95),
+    # Pattern 4: More flexible name (allows hyphens, apostrophes in names)
+    (r"\n([A-Z][a-z]+(?:[-'][A-Z]?[a-z]+)?(?:\s+[A-Z][a-z\.]+)?)\s+[–—-]\s+([A-Z]{2})\s+Visited:\s*(\w+\s+\d{4})", 0.85),
+    # Pattern 5: Name on separate line (fallback)
+    (r"\n([A-Z][a-z]+(?:\s+[A-Z][a-z\.]+)?)\n\s*([A-Z]{2})\s+Visited:\s*(\w+\s+\d{4})", 0.75),
+]
+
+# Wildlife keywords for extraction
+WILDLIFE_KEYWORDS = {
+    "big_five": ["lion", "elephant", "leopard", "rhino", "rhinoceros", "buffalo", "cape buffalo"],
+    "predators": ["cheetah", "wild dog", "hyena", "jackal", "serval", "caracal", "crocodile"],
+    "herbivores": ["giraffe", "zebra", "wildebeest", "gnu", "antelope", "impala", "gazelle",
+                   "kudu", "eland", "waterbuck", "hartebeest", "topi", "oryx", "hippo", "hippopotamus"],
+    "primates": ["baboon", "monkey", "vervet", "colobus", "chimpanzee", "gorilla"],
+    "birds": ["ostrich", "flamingo", "eagle", "vulture", "secretary bird", "hornbill",
+              "kingfisher", "bee-eater", "roller", "stork", "heron", "pelican"],
+}
+
+# Safari park names for extraction
+SAFARI_PARKS = [
+    "masai mara", "maasai mara", "serengeti", "ngorongoro", "amboseli", "tsavo",
+    "kruger", "chobe", "okavango", "etosha", "hwange", "south luangwa",
+    "queen elizabeth", "bwindi", "lake nakuru", "lake manyara", "tarangire",
+    "samburu", "ol pejeta", "laikipia", "lewa", "meru", "selous", "ruaha",
+    "mikumi", "katavi", "gombe", "mahale", "victoria falls", "livingstone",
+]
+
+# Trip type classification keywords
+TRIP_TYPES = {
+    "solo": ["solo", "alone", "single", "by myself", "on my own"],
+    "couple": ["couple", "honeymoon", "romantic", "wife", "husband", "partner", "anniversary", "newlywed"],
+    "family": ["family", "kids", "children", "daughter", "son", "parents", "grandparents", "grandchildren"],
+    "friends": ["friends", "buddies", "mates", "group of friends"],
+    "group": ["group", "tour group", "organized tour", "party of"],
+    "first_safari": ["first safari", "first time", "bucket list", "dream trip", "always wanted"],
+    "repeat": ["return", "back again", "second safari", "third safari", "many safaris", "regular visitor"],
+    "photography": ["photography", "photographer", "photos", "camera", "wildlife photography"],
+    "birdwatching": ["birding", "birdwatching", "bird watching", "ornithology"],
 }
 
 
 class SafaribookingsScraper(BaseScraper):
-    """Scraper for Safaribookings.com safari reviews."""
+    """Scraper for Safaribookings.com safari reviews with enhanced data extraction."""
 
     BASE_URL = "https://www.safaribookings.com"
+    MIN_TEXT_LENGTH = 10  # Reduced from 30 to capture more reviews
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.validator = ReviewValidator()
+        self.error_tracker = ParsingErrorTracker()
 
     @property
     def name(self) -> str:
         return "safaribookings"
+
+    # ==================== Extraction Methods ====================
+
+    def extract_wildlife_sightings(self, text: str) -> list[str]:
+        """Extract wildlife sightings from review text."""
+        if not text:
+            return []
+
+        sightings = []
+        text_lower = text.lower()
+
+        for category, animals in WILDLIFE_KEYWORDS.items():
+            for animal in animals:
+                # Check for singular and plural forms
+                if animal in text_lower or f"{animal}s" in text_lower:
+                    if animal not in sightings:
+                        sightings.append(animal)
+
+        return sightings
+
+    def extract_parks_visited(self, text: str) -> list[str]:
+        """Extract safari park names from review text."""
+        if not text:
+            return []
+
+        parks = []
+        text_lower = text.lower()
+
+        for park in SAFARI_PARKS:
+            if park in text_lower:
+                # Capitalize properly
+                parks.append(park.title())
+
+        return parks
+
+    def extract_guide_names(self, text: str) -> list[str]:
+        """Extract guide names mentioned in review text."""
+        if not text:
+            return []
+
+        guide_patterns = [
+            r"(?:our|the|my)\s+(?:guide|driver|ranger)[,\s]+([A-Z][a-z]+)",
+            r"([A-Z][a-z]+)\s+(?:was|is)\s+(?:our|the|my|an?\s+(?:amazing|excellent|great|fantastic|wonderful))\s+(?:guide|driver|ranger)",
+            r"(?:guide|driver|ranger)\s+(?:named|called)\s+([A-Z][a-z]+)",
+            r"(?:thanks?\s+(?:to\s+)?|shout\s*out\s+(?:to\s+)?)([A-Z][a-z]+)",
+            r"([A-Z][a-z]+)\s+(?:guided|drove|took)\s+us",
+        ]
+
+        names = []
+        for pattern in guide_patterns:
+            matches = re.findall(pattern, text, re.IGNORECASE)
+            for match in matches:
+                name = match.strip().title()
+                # Filter out common false positives
+                if name and len(name) > 2 and name not in names:
+                    if name.lower() not in ["the", "our", "was", "had", "very", "really", "great", "amazing"]:
+                        names.append(name)
+
+        return names
+
+    def extract_age_range(self, text: str) -> str:
+        """Extract reviewer age range from text."""
+        if not text:
+            return ""
+
+        patterns = [
+            r"(\d{2})\s*[-–]\s*(\d{2})\s*(?:years?|yrs?)",
+            r"(?:age|aged?)\s*(?:group)?[:\s]*(\d{2})\s*[-–]\s*(\d{2})",
+            r"(\d{2})\s*to\s*(\d{2})\s*years?",
+        ]
+
+        for pattern in patterns:
+            match = re.search(pattern, text, re.IGNORECASE)
+            if match:
+                return f"{match.group(1)}-{match.group(2)}"
+
+        return ""
+
+    def extract_safari_duration(self, text: str) -> Optional[int]:
+        """Extract safari duration in days from text."""
+        if not text:
+            return None
+
+        patterns = [
+            r"(\d+)\s*(?:day|night)s?\s+(?:safari|trip|tour)",
+            r"(?:safari|trip|tour)\s+(?:of\s+)?(\d+)\s*(?:day|night)s?",
+            r"(\d+)\s*[-–]\s*(?:day|night)\s+(?:safari|trip|tour)",
+        ]
+
+        for pattern in patterns:
+            match = re.search(pattern, text, re.IGNORECASE)
+            if match:
+                try:
+                    return int(match.group(1))
+                except ValueError:
+                    continue
+
+        return None
+
+    def classify_trip_type(self, text: str) -> str:
+        """Classify trip type from review text."""
+        if not text:
+            return ""
+
+        text_lower = text.lower()
+
+        for trip_type, keywords in TRIP_TYPES.items():
+            for keyword in keywords:
+                if keyword in text_lower:
+                    return trip_type
+
+        return ""
 
     async def check_for_captcha(self) -> bool:
         """Check for actual CAPTCHA or blocking (not cookie popups)."""
@@ -378,7 +535,7 @@ class SafaribookingsScraper(BaseScraper):
     async def _parse_reviews_from_text(
         self, operator_url: str, operator_name: str
     ) -> list[Review]:
-        """Parse reviews from page text using Safaribookings' actual structure."""
+        """Parse reviews from page text using multi-strategy parsing."""
         reviews = []
 
         try:
@@ -390,23 +547,36 @@ class SafaribookingsScraper(BaseScraper):
             full_text = await body.inner_text()
             print(f"    Got page text: {len(full_text)} characters")
 
-            # Safaribookings format:
-            # "Name   –    CC Visited: Month Year Reviewed: Date"
-            # Then: "Email Name  |  age  |  Experience level: X"
-            # Then: "Title"
-            # Then: " rating/5"
-            # Then: "Review text"
+            # Try multiple patterns with fallbacks
+            all_matches = []
+            used_positions = set()
 
-            # Split by the reviewer pattern: "Name – CC Visited:"
-            # Name is typically "First Last" or "First L." format
-            review_pattern = r"\n([A-Z][a-z]+(?:\s+[A-Z][a-z\.]+)?)\s+–\s+([A-Z]{2})\s+Visited:\s*(\w+\s+\d{4})\s+Reviewed:\s*([A-Za-z]+\s+\d+,?\s*\d{4})"
-
-            matches = list(re.finditer(review_pattern, full_text))
-            print(f"    Regex found {len(matches)} reviewer matches")
-
-            for i, match in enumerate(matches):
+            for pattern, confidence in REVIEWER_PATTERNS:
                 try:
-                    # Create unique URL for each review using reviewer name and position
+                    matches = list(re.finditer(pattern, full_text))
+                    for match in matches:
+                        # Avoid duplicate matches at same position
+                        if match.start() not in used_positions:
+                            all_matches.append({
+                                'match': match,
+                                'confidence': confidence,
+                                'pattern': pattern[:50],  # For debugging
+                            })
+                            used_positions.add(match.start())
+                except re.error:
+                    continue
+
+            # Sort by position in text
+            all_matches.sort(key=lambda x: x['match'].start())
+            print(f"    Multi-strategy parsing found {len(all_matches)} reviewer matches")
+
+            for i, match_info in enumerate(all_matches):
+                match = match_info['match']
+                confidence = match_info['confidence']
+                warnings = []
+
+                try:
+                    # Create unique URL for each review
                     reviewer_name = match.group(1).strip()
                     review_url = f"{operator_url}#review-{i+1}-{reviewer_name.replace(' ', '-').lower()}"
 
@@ -414,45 +584,55 @@ class SafaribookingsScraper(BaseScraper):
                         source="safaribookings",
                         url=review_url,
                         operator_name=operator_name,
+                        parsing_confidence=confidence,
                     )
 
-                    # Extract from regex groups
-                    review.reviewer_name = match.group(1).strip()
-                    country_code = match.group(2)
-                    review.reviewer_country = COUNTRY_CODES.get(country_code, country_code)
-                    review.travel_date = match.group(3)
-                    review.review_date = match.group(4)
+                    # Extract from regex groups - clean up reviewer name
+                    # Remove any feedback section text that may have been captured
+                    clean_name = reviewer_name
+                    for noise in ["yes", "no", "link to this review", "\n"]:
+                        clean_name = clean_name.replace(noise, "").replace(noise.title(), "")
+                    clean_name = " ".join(clean_name.split()).strip()
+                    review.reviewer_name = clean_name
+                    country_code = match.group(2).upper()
+                    review.reviewer_country = get_country_name(country_code)
 
-                    # Get text between this match and next match (or end)
+                    # Travel date (group 3)
+                    if len(match.groups()) >= 3:
+                        review.travel_date = match.group(3)
+
+                    # Review date (group 4 if exists)
+                    if len(match.groups()) >= 4 and match.group(4):
+                        review.review_date = match.group(4)
+
+                    # Get text block between this match and next
                     start_pos = match.end()
-                    end_pos = matches[i + 1].start() if i + 1 < len(matches) else len(full_text)
+                    end_pos = all_matches[i + 1]['match'].start() if i + 1 < len(all_matches) else len(full_text)
                     block = full_text[start_pos:end_pos]
 
-                    # Extract rating - " X/5" pattern
+                    # Store raw block for debugging
+                    review.raw_text_block = block[:2000] if len(block) > 2000 else block
+
+                    # Extract rating
                     rating_match = re.search(r"\s(\d+(?:\.\d+)?)\s*/\s*5", block)
                     if rating_match:
                         review.rating = float(rating_match.group(1))
 
-                    # Extract experience level
+                    # Extract experience level and trip type
                     exp_match = re.search(r"Experience level:\s*([^\n|]+)", block)
                     if exp_match:
                         exp = exp_match.group(1).strip().lower()
                         if "first" in exp:
                             review.trip_type = "first_safari"
-                        elif "2-5" in exp or "repeat" in exp:
+                        elif "2-5" in exp or "repeat" in exp or "6+" in exp:
                             review.trip_type = "repeat"
 
-                    # Extract age range
-                    age_match = re.search(r"(\d+-\d+)\s*years", block)
+                    # Extract age range from block
+                    age_match = re.search(r"(\d{2})\s*[-–]\s*(\d{2})\s*years", block)
+                    if age_match:
+                        review.age_range = f"{age_match.group(1)}-{age_match.group(2)}"
 
-                    # Extract title and text
-                    # Block format after header:
-                    # Email Name | age | Experience level: X
-                    # Title text
-                    #  X/5
-                    # Review text
-                    # Was this review helpful? Yes No Link to This Review
-
+                    # Parse title and text from block structure
                     lines = block.strip().split("\n")
 
                     # Find the rating line position
@@ -464,7 +644,6 @@ class SafaribookingsScraper(BaseScraper):
 
                     # Title is usually the line just before rating
                     if rating_line_idx > 0:
-                        # Look for title - skip metadata lines
                         for idx in range(rating_line_idx - 1, -1, -1):
                             line = lines[idx].strip()
                             if line and not any(x in line.lower() for x in [
@@ -473,33 +652,85 @@ class SafaribookingsScraper(BaseScraper):
                                 review.title = line
                                 break
 
-                    # Text is everything after rating until the "Was this review helpful?" line
+                    # Text is everything after rating until feedback section
                     text_lines = []
                     if rating_line_idx >= 0:
                         for idx in range(rating_line_idx + 1, len(lines)):
                             line = lines[idx].strip()
 
-                            # Stop at the feedback section
+                            # Stop at feedback section
                             if "was this review helpful" in line.lower():
                                 break
                             if line.lower() in ["yes", "no"] or "link to this review" in line.lower():
                                 break
 
-                            # Skip very short lines
-                            if len(line) > 10:
+                            # Accept all lines (reduced filtering)
+                            if len(line) > 5:
                                 text_lines.append(line)
 
                     review.text = " ".join(text_lines)
 
-                    if review.text and len(review.text) > 30:
+                    # === NEW: Extract additional fields ===
+
+                    # Wildlife sightings
+                    wildlife = self.extract_wildlife_sightings(review.text)
+                    if wildlife:
+                        review.wildlife_sightings = json.dumps(wildlife)
+
+                    # Parks visited
+                    parks = self.extract_parks_visited(review.text)
+                    if parks:
+                        review.parks_visited = json.dumps(parks)
+
+                    # Guide names
+                    guides = self.extract_guide_names(review.text)
+                    if guides:
+                        review.guide_names_mentioned = json.dumps(guides)
+
+                    # Safari duration
+                    duration = self.extract_safari_duration(review.text)
+                    if duration:
+                        review.safari_duration_days = duration
+
+                    # Trip type from text (if not set from experience level)
+                    if not review.trip_type:
+                        review.trip_type = self.classify_trip_type(review.text)
+
+                    # Validate and track
+                    is_valid, validation_warnings = self.validator.validate(review)
+                    warnings.extend(validation_warnings)
+
+                    # Record parsing result
+                    self.error_tracker.record_attempt(ParseResult(
+                        success=True,
+                        review=review,
+                        confidence=confidence,
+                        warnings=warnings,
+                        raw_block=block[:500],
+                        strategy_used=match_info['pattern'],
+                    ))
+
+                    # Accept reviews with text >= MIN_TEXT_LENGTH (reduced from 30)
+                    if review.text and len(review.text) >= self.MIN_TEXT_LENGTH:
+                        reviews.append(review)
+                    elif review.text:
+                        # Still accept but flag as short
+                        warnings.append(f"short_text:{len(review.text)}")
+                        review.parse_warnings = json.dumps(warnings)
                         reviews.append(review)
 
                 except Exception as e:
-                    print(f"Error parsing review block: {e}")
+                    print(f"    Error parsing review block: {e}")
+                    self.error_tracker.record_attempt(ParseResult(
+                        success=False,
+                        warnings=[str(e)],
+                        raw_block=block[:500] if 'block' in locals() else '',
+                        strategy_used=match_info.get('pattern', 'unknown'),
+                    ))
                     continue
 
         except Exception as e:
-            print(f"Error parsing reviews from text: {e}")
+            print(f"    Error parsing reviews from text: {e}")
 
         return reviews
 
@@ -559,15 +790,27 @@ class SafaribookingsScraper(BaseScraper):
 
         return trip_text
 
+    def get_parsing_report(self) -> dict:
+        """Get detailed parsing statistics and error report."""
+        return self.error_tracker.get_report()
+
+    def print_parsing_summary(self):
+        """Print a summary of parsing results."""
+        print(self.error_tracker.get_summary())
+
     async def scrape_all(
         self,
         max_operators: int = 50,
         max_reviews_per_operator: int = 50,
         resume: bool = True,
+        max_operator_pages: int = 20,
     ) -> list[Review]:
-        """Scrape reviews from multiple operators."""
+        """Scrape reviews from multiple operators with enhanced tracking."""
         all_reviews = []
         processed_urls = set()
+
+        # Reset error tracker for this run
+        self.error_tracker.reset()
 
         if resume:
             progress = self.load_progress()
@@ -577,7 +820,7 @@ class SafaribookingsScraper(BaseScraper):
 
         try:
             print("Fetching operator URLs...")
-            operator_urls = await self.get_operator_urls(max_pages=5)
+            operator_urls = await self.get_operator_urls(max_pages=max_operator_pages)
             print(f"Found {len(operator_urls)} operators")
 
             for i, url in enumerate(operator_urls[:max_operators]):
@@ -603,9 +846,103 @@ class SafaribookingsScraper(BaseScraper):
                     "total_reviews": len(all_reviews),
                 })
 
-                await self.random_delay()
+                # Adaptive rate limiting - slower after many requests
+                if i > 50:
+                    await asyncio.sleep(self.max_delay * 1.5)
+                else:
+                    await self.random_delay()
+
+                # Print parsing stats every 10 operators
+                if (i + 1) % 10 == 0:
+                    report = self.get_parsing_report()
+                    print(f"  [Parsing stats: {report['stats']['successful']} OK, "
+                          f"{report['stats']['failed']} failed, "
+                          f"{report['stats']['low_confidence']} low confidence]")
 
         finally:
             await self.stop()
 
+        # Print final parsing summary
+        print("\n=== Parsing Summary ===")
+        self.print_parsing_summary()
+
         return all_reviews
+
+    async def scrape_all_batched(
+        self,
+        max_operators: int = 100,
+        max_reviews_per_operator: int = 1000,
+        batch_callback=None,
+        resume: bool = True,
+    ) -> int:
+        """
+        Scrape with batched processing for large-scale operations.
+
+        Args:
+            max_operators: Maximum number of operators to scrape
+            max_reviews_per_operator: Maximum reviews per operator
+            batch_callback: Optional callback(reviews: list[Review]) called after each operator
+            resume: Whether to resume from saved progress
+
+        Returns:
+            Total number of reviews scraped
+        """
+        total_reviews = 0
+        processed_urls = set()
+
+        self.error_tracker.reset()
+
+        if resume:
+            progress = self.load_progress()
+            if progress:
+                processed_urls = set(progress.get("processed_urls", []))
+                total_reviews = progress.get("total_reviews", 0)
+                print(f"Resuming: {len(processed_urls)} operators, {total_reviews} reviews")
+
+        try:
+            print("Fetching operator URLs (up to 20 pages)...")
+            operator_urls = await self.get_operator_urls(max_pages=20)
+            print(f"Found {len(operator_urls)} operators")
+
+            for i, url in enumerate(operator_urls[:max_operators]):
+                if self._stop_requested:
+                    break
+
+                if url in processed_urls:
+                    continue
+
+                print(f"[{i+1}/{min(len(operator_urls), max_operators)}] Scraping: {url}")
+
+                try:
+                    reviews = await self.scrape_reviews(url, max_reviews=max_reviews_per_operator)
+
+                    if batch_callback and reviews:
+                        batch_callback(reviews)
+
+                    total_reviews += len(reviews)
+                    print(f"  Found {len(reviews)} reviews (total: {total_reviews})")
+
+                except Exception as e:
+                    print(f"  Error: {e}")
+
+                processed_urls.add(url)
+
+                # Save progress frequently
+                self.save_progress({
+                    "processed_urls": list(processed_urls),
+                    "total_reviews": total_reviews,
+                })
+
+                # Adaptive delay
+                if i > 50:
+                    await asyncio.sleep(self.max_delay * 2)
+                else:
+                    await self.random_delay()
+
+        finally:
+            await self.stop()
+
+        print(f"\n=== Completed: {total_reviews} total reviews ===")
+        self.print_parsing_summary()
+
+        return total_reviews
