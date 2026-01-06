@@ -1,0 +1,30 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "safari-review-fetcher"
+version = "0.1.0"
+description = "Scraper and analyzer for safari reviews from TripAdvisor and Safaribookings"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "playwright>=1.40.0",
+    "pandas>=2.0.0",
+    "spacy>=3.7.0",
+    "textblob>=0.18.0",
+    "rich>=13.0.0",
+    "click>=8.1.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0.0",
+    "pytest-asyncio>=0.21.0",
+]
+
+[project.scripts]
+safari-reviews = "src.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src"]
