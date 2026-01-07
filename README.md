@@ -34,7 +34,7 @@ source venv/bin/activate  # On Windows: venv\Scripts\activate
 
 # Install dependencies
 pip install --upgrade pip
-pip install playwright pandas spacy textblob rich click
+pip install playwright pandas spacy textblob rich click fastapi uvicorn websockets
 
 # Install Playwright browsers
 playwright install chromium
@@ -52,14 +52,25 @@ join-review-fetcher/
 │   ├── scrapers/
 │   │   ├── base.py         # Base scraper with anti-bot features
 │   │   ├── safaribookings.py
-│   │   └── tripadvisor.py
+│   │   ├── tripadvisor.py
+│   │   ├── country_codes.py    # ISO country code mapping
+│   │   └── validation.py       # Review validation and error tracking
 │   ├── database/
 │   │   ├── models.py       # Data models (Review, GuideAnalysis, etc.)
 │   │   └── connection.py   # SQLite database operations
-│   └── analysis/
-│       ├── guide_analyzer.py      # Guide mention detection
-│       ├── decision_factors.py    # Purchasing factor extraction
-│       └── demographics.py        # Demographic classification
+│   ├── analysis/
+│   │   ├── guide_analyzer.py      # Guide mention detection
+│   │   ├── decision_factors.py    # Purchasing factor extraction
+│   │   └── demographics.py        # Demographic classification
+│   └── web/                # Web UI module
+│       ├── app.py              # FastAPI application
+│       ├── routes.py           # REST API endpoints
+│       ├── websocket.py        # WebSocket connection manager
+│       ├── scraper_runner.py   # Background scraper execution
+│       ├── sleep_manager.py    # macOS sleep prevention
+│       └── static/             # Frontend assets
+│           ├── index.html      # Tailwind CSS UI
+│           └── js/app.js       # Alpine.js application
 ├── data/
 │   └── reviews.db          # SQLite database (created on first run)
 └── output/
@@ -145,6 +156,45 @@ python -m src.cli report
 
 ```bash
 python -m src.cli clear-progress --source safaribookings
+```
+
+### Web UI
+
+The scraper includes a web-based UI for real-time monitoring and control.
+
+#### Starting the Web Server
+
+```bash
+# Using the CLI command
+python -m src.cli web
+
+# Or using uvicorn directly
+python3 -m uvicorn src.web.app:app --host 127.0.0.1 --port 8000
+
+# With auto-reload for development
+python3 -m uvicorn src.web.app:app --host 127.0.0.1 --port 8000 --reload
+```
+
+Then open http://127.0.0.1:8000 in your browser.
+
+#### Web UI Features
+
+- **Real-time Progress Monitoring**: WebSocket-based live updates during scraping
+- **Control Panel**: Start/stop scraping, configure max operators and reviews
+- **Sleep Prevention**: Automatically prevents macOS from sleeping during long scrapes
+- **Database Statistics**: View review counts, countries, operators in real-time
+- **Activity Log**: Scrolling log of all scraper events
+- **Quality Metrics**: Parse success rate, failed parses, low confidence counts
+
+#### CLI Options
+
+```bash
+python -m src.cli web [OPTIONS]
+
+Options:
+  --host TEXT      Host to bind to (default: 127.0.0.1)
+  --port INTEGER   Port to run server on (default: 8000)
+  --reload         Enable auto-reload for development
 ```
 
 ### Programmatic Usage
