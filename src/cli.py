@@ -257,5 +257,27 @@ def clear_progress(ctx, source):
     console.print(f"[green]Cleared progress for {source}[/]")
 
 
+@main.command()
+@click.option("--host", default="127.0.0.1", help="Host to bind to")
+@click.option("--port", default=8000, help="Port to run server on")
+@click.option("--reload", is_flag=True, help="Enable auto-reload for development")
+def web(host, port, reload):
+    """Start the web UI server."""
+    import uvicorn
+
+    console.print(Panel.fit(
+        f"[bold]Safari Review Scraper Web UI[/]\n"
+        f"[dim]Starting server at http://{host}:{port}[/]",
+        border_style="green"
+    ))
+
+    uvicorn.run(
+        "src.web.app:app",
+        host=host,
+        port=port,
+        reload=reload,
+    )
+
+
 if __name__ == "__main__":
     main()
