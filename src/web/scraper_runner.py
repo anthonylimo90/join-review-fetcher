@@ -17,7 +17,7 @@ class ScrapeConfig:
     """Configuration for a scrape job."""
     source: str = "safaribookings"
     max_operators: int = 50
-    max_reviews_per_operator: int = 50
+    max_reviews_per_operator: int = 200
     headless: bool = True
     resume: bool = True
 
@@ -37,6 +37,7 @@ class ScrapeStatus:
     parsing_stats: dict = field(default_factory=dict)
     errors: list = field(default_factory=list)
     config: Optional[ScrapeConfig] = None
+    run_id: Optional[int] = None  # Database run ID for tracking
 
 
 class ScraperRunner:
@@ -56,21 +57,42 @@ class ScraperRunner:
     def _sync_broadcast(self, event: dict):
         """Synchronously broadcast event (for use in callbacks)."""
         event["timestamp"] = datetime.now().isoformat()
-        if self._loop and self._loop.is_running():
-            asyncio.run_coroutine_threadsafe(
-                ws_manager.broadcast(event),
-                self._loop
-            )
+        try:
+            if self._loop and self._loop.is_running():
+                future = asyncio.run_coroutine_threadsafe(
+                    ws_manager.broadcast(event),
+                    self._loop
+                )
+                # Wait briefly to ensure message is sent
+                try:
+                    future.result(timeout=1.0)
+                except Exception:
+                    pass
+        except Exception as e:
+            print(f"Broadcast error: {e}")
 
     async def start_scrape(self, config: ScrapeConfig) -> bool:
         """Start a new scrape job."""
         if self.status.is_running:
             return False
 
+        # Create run record in database
+        db = Database()
+        run_id = db.create_scrape_run(
+            source=config.source,
+            config={
+                "max_operators": config.max_operators,
+                "max_reviews_per_operator": config.max_reviews_per_operator,
+                "headless": config.headless,
+                "resume": config.resume,
+            }
+        )
+
         self.status = ScrapeStatus(
             is_running=True,
             started_at=datetime.now(),
             config=config,
+            run_id=run_id,
         )
 
         # Start sleep prevention
@@ -106,26 +128,61 @@ class ScraperRunner:
         # Create new event loop for this thread
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
+        db = Database()
 
         try:
+            print(f"[ScraperRunner] Starting scrape with config: {config}")
             loop.run_until_complete(self._async_scrape(config))
+            print("[ScraperRunner] Scrape completed successfully")
+
+            # Update run as completed
+            if self.status.run_id:
+                db.update_scrape_run(
+                    self.status.run_id,
+                    status='completed',
+                    reviews_collected=self.status.total_reviews,
+                    operators_completed=self.status.current_operator_index,
+                    errors=self.status.errors[-10:]
+                )
+
+            # Invalidate analytics cache so fresh data is shown
+            try:
+                from .routes import invalidate_analytics_cache
+                invalidate_analytics_cache()
+            except Exception:
+                pass
         except Exception as e:
+            import traceback
+            error_msg = f"{str(e)}\n{traceback.format_exc()}"
+            print(f"[ScraperRunner] Error: {error_msg}")
+            self.status.errors.append(str(e))
             self._sync_broadcast({
                 "type": "error",
                 "message": str(e),
                 "requires_action": False,
             })
+
+            # Update run as failed
+            if self.status.run_id:
+                db.update_scrape_run(
+                    self.status.run_id,
+                    status='failed',
+                    reviews_collected=self.status.total_reviews,
+                    operators_completed=self.status.current_operator_index,
+                    errors=self.status.errors[-10:]
+                )
         finally:
             loop.close()
             self.status.is_running = False
             sleep_manager.stop()
+            print("[ScraperRunner] Scraper stopped, cleanup complete")
 
     async def _async_scrape(self, config: ScrapeConfig):
         """Async scraping logic with progress callbacks."""
         db = Database()
 
         if config.source == "safaribookings":
-            self._scraper = SafaribookingsScraper(db, headless=config.headless)
+            self._scraper = SafaribookingsScraper(headless=config.headless)
         else:
             raise ValueError(f"Unknown source: {config.source}")
 
@@ -159,7 +216,15 @@ class ScraperRunner:
                 "type": "operators_discovered",
                 "total": len(operator_urls),
                 "to_scrape": self.status.total_operators,
+                "operator_urls": operator_urls[:config.max_operators],
             })
+
+            # Update run with operators total
+            if self.status.run_id:
+                db.update_scrape_run(
+                    self.status.run_id,
+                    operators_total=self.status.total_operators
+                )
 
             # Scrape each operator
             for i, url in enumerate(operator_urls[:config.max_operators]):
@@ -290,6 +355,17 @@ class ScraperRunner:
         # Wait for thread to finish
         if self._thread and self._thread.is_alive():
             self._thread.join(timeout=30)
+
+        # Update run as stopped
+        if self.status.run_id:
+            db = Database()
+            db.update_scrape_run(
+                self.status.run_id,
+                status='stopped',
+                reviews_collected=self.status.total_reviews,
+                operators_completed=self.status.current_operator_index,
+                errors=self.status.errors[-10:]
+            )
 
         self.status.is_running = False
         sleep_manager.stop()

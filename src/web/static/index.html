@@ -16,214 +16,899 @@
 <body class="bg-gray-900 text-gray-100 min-h-screen" x-data="scraperApp()" x-init="init()">
 
     <!-- Header -->
-    <header class="bg-gray-800 border-b border-gray-700 px-6 py-4">
-        <div class="flex items-center justify-between max-w-7xl mx-auto">
-            <div class="flex items-center gap-3">
-                <svg class="w-8 h-8 text-amber-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3.055 11H5a2 2 0 012 2v1a2 2 0 002 2 2 2 0 012 2v2.945M8 3.935V5.5A2.5 2.5 0 0010.5 8h.5a2 2 0 012 2 2 2 0 104 0 2 2 0 012-2h1.064M15 20.488V18a2 2 0 012-2h3.064M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
-                </svg>
-                <h1 class="text-xl font-bold">Safari Review Scraper</h1>
-            </div>
-            <div class="flex items-center gap-4">
-                <!-- WebSocket Status -->
-                <div class="flex items-center gap-2 text-sm">
-                    <span class="w-2 h-2 rounded-full" :class="wsConnected ? 'bg-green-500' : 'bg-red-500'"></span>
-                    <span x-text="wsConnected ? 'Connected' : 'Disconnected'"></span>
+    <header class="bg-gray-800 border-b border-gray-700">
+        <div class="max-w-7xl mx-auto px-6 py-4">
+            <div class="flex items-center justify-between">
+                <div class="flex items-center gap-3">
+                    <svg class="w-8 h-8 text-amber-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3.055 11H5a2 2 0 012 2v1a2 2 0 002 2 2 2 0 012 2v2.945M8 3.935V5.5A2.5 2.5 0 0010.5 8h.5a2 2 0 012 2 2 2 0 104 0 2 2 0 012-2h1.064M15 20.488V18a2 2 0 012-2h3.064M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
+                    </svg>
+                    <h1 class="text-xl font-bold">Safari Review Scraper</h1>
                 </div>
-                <!-- Sleep Prevention Status -->
-                <div x-show="sleepPrevented" class="flex items-center gap-2 text-sm text-amber-400">
-                    <span>&#9749;</span>
-                    <span>Sleep Prevented</span>
+                <div class="flex items-center gap-4">
+                    <!-- WebSocket Status -->
+                    <div class="flex items-center gap-2 text-sm">
+                        <span class="w-2 h-2 rounded-full" :class="wsConnected ? 'bg-green-500' : 'bg-red-500'"></span>
+                        <span x-text="wsConnected ? 'Connected' : 'Disconnected'"></span>
+                    </div>
+                    <!-- Sleep Prevention Status -->
+                    <div x-show="sleepPrevented" class="flex items-center gap-2 text-sm text-amber-400" x-cloak>
+                        <span>&#9749;</span>
+                        <span>Sleep Prevented</span>
+                    </div>
                 </div>
             </div>
         </div>
+
+        <!-- Tab Navigation -->
+        <div class="max-w-7xl mx-auto px-6">
+            <nav class="flex gap-1">
+                <button @click="activeTab = 'dashboard'"
+                    :class="activeTab === 'dashboard' ? 'bg-gray-900 text-amber-500 border-amber-500' : 'text-gray-400 hover:text-gray-200 border-transparent'"
+                    class="px-4 py-3 text-sm font-medium border-b-2 transition-colors">
+                    Dashboard
+                </button>
+                <button @click="activeTab = 'operators'"
+                    :class="activeTab === 'operators' ? 'bg-gray-900 text-amber-500 border-amber-500' : 'text-gray-400 hover:text-gray-200 border-transparent'"
+                    class="px-4 py-3 text-sm font-medium border-b-2 transition-colors">
+                    Operators
+                </button>
+                <button @click="activeTab = 'reviews'"
+                    :class="activeTab === 'reviews' ? 'bg-gray-900 text-amber-500 border-amber-500' : 'text-gray-400 hover:text-gray-200 border-transparent'"
+                    class="px-4 py-3 text-sm font-medium border-b-2 transition-colors">
+                    Reviews
+                </button>
+                <button @click="activeTab = 'analysis'"
+                    :class="activeTab === 'analysis' ? 'bg-gray-900 text-amber-500 border-amber-500' : 'text-gray-400 hover:text-gray-200 border-transparent'"
+                    class="px-4 py-3 text-sm font-medium border-b-2 transition-colors">
+                    Analysis
+                </button>
+                <button @click="activeTab = 'export'"
+                    :class="activeTab === 'export' ? 'bg-gray-900 text-amber-500 border-amber-500' : 'text-gray-400 hover:text-gray-200 border-transparent'"
+                    class="px-4 py-3 text-sm font-medium border-b-2 transition-colors">
+                    Export
+                </button>
+            </nav>
+        </div>
     </header>
 
-    <div class="flex max-w-7xl mx-auto">
-        <!-- Sidebar - Controls -->
-        <aside class="w-80 bg-gray-800 border-r border-gray-700 p-6 min-h-[calc(100vh-73px)]">
-            <h2 class="text-lg font-semibold mb-4">Scrape Configuration</h2>
-
-            <!-- Source Selection -->
-            <div class="mb-4">
-                <label class="block text-sm text-gray-400 mb-2">Source</label>
-                <select x-model="config.source" class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-sm focus:outline-none focus:border-amber-500" :disabled="isRunning">
-                    <option value="safaribookings">Safaribookings</option>
-                    <option value="tripadvisor">TripAdvisor</option>
-                </select>
-            </div>
-
-            <!-- Max Operators -->
-            <div class="mb-4">
-                <label class="block text-sm text-gray-400 mb-2">Max Operators</label>
-                <input type="number" x-model.number="config.maxOperators" min="1" max="500" class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-sm focus:outline-none focus:border-amber-500" :disabled="isRunning">
-            </div>
-
-            <!-- Max Reviews per Operator -->
-            <div class="mb-4">
-                <label class="block text-sm text-gray-400 mb-2">Max Reviews per Operator</label>
-                <input type="number" x-model.number="config.maxReviews" min="1" max="1000" class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-sm focus:outline-none focus:border-amber-500" :disabled="isRunning">
-            </div>
-
-            <!-- Toggles -->
-            <div class="space-y-3 mb-6">
-                <label class="flex items-center gap-3 cursor-pointer">
-                    <input type="checkbox" x-model="config.headless" class="w-4 h-4 rounded bg-gray-700 border-gray-600 text-amber-500 focus:ring-amber-500" :disabled="isRunning">
-                    <span class="text-sm">Headless Mode</span>
-                </label>
-                <label class="flex items-center gap-3 cursor-pointer">
-                    <input type="checkbox" x-model="config.resume" class="w-4 h-4 rounded bg-gray-700 border-gray-600 text-amber-500 focus:ring-amber-500" :disabled="isRunning">
-                    <span class="text-sm">Resume from Checkpoint</span>
-                </label>
-            </div>
-
+    <main class="max-w-7xl mx-auto">
+        <!-- ==================== DASHBOARD TAB ==================== -->
+        <div x-show="activeTab === 'dashboard'" x-cloak class="p-6">
             <!-- Action Buttons -->
-            <div class="space-y-3">
-                <button @click="startScrape()" :disabled="isRunning" class="w-full bg-amber-600 hover:bg-amber-700 disabled:bg-gray-600 disabled:cursor-not-allowed text-white font-medium py-2 px-4 rounded transition">
-                    <span x-show="!isRunning">Start Scraping</span>
-                    <span x-show="isRunning">Scraping...</span>
+            <div class="flex gap-3 mb-6">
+                <button @click="openNewScrapeModal()" :disabled="isRunning"
+                    class="bg-amber-600 hover:bg-amber-700 disabled:bg-gray-600 disabled:cursor-not-allowed text-white font-medium py-2 px-6 rounded-lg transition flex items-center gap-2">
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/>
+                    </svg>
+                    New Scrape
                 </button>
-                <button @click="stopScrape()" :disabled="!isRunning" class="w-full bg-red-600 hover:bg-red-700 disabled:bg-gray-600 disabled:cursor-not-allowed text-white font-medium py-2 px-4 rounded transition">
-                    Stop Scraping
+                <button @click="stopScrape()" :disabled="!isRunning"
+                    class="bg-red-600 hover:bg-red-700 disabled:bg-gray-600 disabled:cursor-not-allowed text-white font-medium py-2 px-6 rounded-lg transition flex items-center gap-2">
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 10a1 1 0 011-1h4a1 1 0 011 1v4a1 1 0 01-1 1h-4a1 1 0 01-1-1v-4z"/>
+                    </svg>
+                    Stop
                 </button>
-                <button @click="clearProgress()" :disabled="isRunning" class="w-full bg-gray-600 hover:bg-gray-700 disabled:bg-gray-700 disabled:cursor-not-allowed text-white font-medium py-2 px-4 rounded transition">
-                    Clear Progress
-                </button>
             </div>
 
-            <!-- Checkpoint Info -->
-            <div x-show="checkpoint" class="mt-6 p-3 bg-gray-700 rounded text-sm" x-cloak>
-                <h3 class="font-medium mb-2">Saved Progress</h3>
-                <template x-if="checkpoint?.safaribookings">
-                    <div>
-                        <p class="text-gray-400">Operators: <span class="text-gray-200" x-text="checkpoint.safaribookings.processed_urls?.length || 0"></span></p>
-                        <p class="text-gray-400">Reviews: <span class="text-gray-200" x-text="checkpoint.safaribookings.total_reviews || 0"></span></p>
-                    </div>
-                </template>
-            </div>
-        </aside>
-
-        <!-- Main Content -->
-        <main class="flex-1 p-6">
-            <!-- Progress Section -->
-            <div class="mb-6">
-                <h2 class="text-lg font-semibold mb-4">Progress</h2>
-
-                <!-- Overall Progress Bar -->
-                <div class="bg-gray-800 rounded-lg p-4 mb-4">
-                    <div class="flex justify-between text-sm mb-2">
-                        <span>Operators</span>
-                        <span x-text="`${status.current_operator_index || 0} / ${status.total_operators || config.maxOperators}`"></span>
-                    </div>
-                    <div class="w-full bg-gray-700 rounded-full h-3">
-                        <div class="bg-amber-500 h-3 rounded-full transition-all duration-300" :style="`width: ${operatorProgress}%`"></div>
-                    </div>
-                </div>
-
-                <!-- Stats Grid -->
-                <div class="grid grid-cols-4 gap-4 mb-4">
-                    <div class="bg-gray-800 rounded-lg p-4 text-center">
-                        <div class="text-2xl font-bold text-amber-500" x-text="status.total_reviews || 0"></div>
-                        <div class="text-sm text-gray-400">Total Reviews</div>
-                    </div>
-                    <div class="bg-gray-800 rounded-lg p-4 text-center">
-                        <div class="text-2xl font-bold text-green-500" x-text="status.parsing_stats?.successful || 0"></div>
-                        <div class="text-sm text-gray-400">Parsed OK</div>
-                    </div>
-                    <div class="bg-gray-800 rounded-lg p-4 text-center">
-                        <div class="text-2xl font-bold text-red-500" x-text="status.parsing_stats?.failed || 0"></div>
-                        <div class="text-sm text-gray-400">Failed</div>
-                    </div>
-                    <div class="bg-gray-800 rounded-lg p-4 text-center">
-                        <div class="text-2xl font-bold text-yellow-500" x-text="status.parsing_stats?.low_confidence || 0"></div>
-                        <div class="text-sm text-gray-400">Low Confidence</div>
-                    </div>
-                </div>
-
-                <!-- Current Operator -->
-                <div x-show="isRunning && status.current_operator" class="bg-gray-800 rounded-lg p-4 mb-4" x-cloak>
-                    <div class="flex items-center justify-between mb-2">
-                        <span class="text-sm text-gray-400">Current Operator</span>
-                        <span class="text-sm text-gray-400" x-text="`Page ${status.current_page || 1}`"></span>
-                    </div>
-                    <div class="text-sm text-amber-400 truncate" x-text="status.current_operator"></div>
-                    <div class="text-xs text-gray-500 mt-1" x-text="`${status.reviews_on_current_operator || 0} reviews extracted`"></div>
-                </div>
-            </div>
-
-            <!-- Activity Log -->
-            <div class="mb-6">
-                <h2 class="text-lg font-semibold mb-4">Activity Log</h2>
-                <div class="bg-gray-800 rounded-lg p-4 h-64 overflow-y-auto scrollbar-thin">
-                    <template x-if="activityLog.length === 0">
-                        <p class="text-gray-500 text-sm">No activity yet. Start a scrape to see progress.</p>
-                    </template>
-                    <template x-for="(log, index) in activityLog" :key="index">
-                        <div class="flex items-start gap-3 mb-2 text-sm">
-                            <span class="text-gray-500 text-xs whitespace-nowrap" x-text="formatTime(log.timestamp)"></span>
-                            <span :class="{
-                                'text-green-400': log.type === 'completed' || log.type === 'operator_completed',
-                                'text-amber-400': log.type === 'started' || log.type === 'operator_started',
-                                'text-red-400': log.type === 'error' || log.type === 'operator_error',
-                                'text-blue-400': log.type === 'operators_discovered',
-                                'text-gray-300': true
-                            }" x-text="log.message"></span>
-                        </div>
-                    </template>
-                </div>
-            </div>
-
-            <!-- Database Stats -->
-            <div>
-                <h2 class="text-lg font-semibold mb-4">Database Statistics</h2>
-                <div class="grid grid-cols-3 gap-4">
+            <div class="grid grid-cols-4 gap-6">
+                <!-- Quick Stats Sidebar -->
+                <div class="col-span-1 space-y-4">
                     <div class="bg-gray-800 rounded-lg p-4">
-                        <div class="text-3xl font-bold mb-1" x-text="dbStats.total_reviews || 0"></div>
-                        <div class="text-sm text-gray-400">Total Reviews</div>
-                    </div>
-                    <div class="bg-gray-800 rounded-lg p-4">
-                        <div class="text-3xl font-bold mb-1" x-text="dbStats.distinct_operators || 0"></div>
-                        <div class="text-sm text-gray-400">Operators</div>
-                    </div>
-                    <div class="bg-gray-800 rounded-lg p-4">
-                        <div class="text-3xl font-bold mb-1" x-text="dbStats.countries_represented || 0"></div>
-                        <div class="text-sm text-gray-400">Countries</div>
-                    </div>
-                </div>
-
-                <!-- Source Breakdown -->
-                <div class="grid grid-cols-2 gap-4 mt-4">
-                    <div class="bg-gray-800 rounded-lg p-4">
-                        <h3 class="text-sm font-medium text-gray-400 mb-3">Reviews by Source</h3>
-                        <div class="space-y-2">
-                            <div class="flex justify-between">
-                                <span>Safaribookings</span>
-                                <span class="text-amber-500" x-text="dbStats.by_source?.safaribookings || 0"></span>
+                        <h3 class="text-xs font-medium text-gray-400 uppercase tracking-wide mb-3">Quick Stats</h3>
+                        <div class="space-y-4">
+                            <div>
+                                <div class="text-3xl font-bold text-amber-500" x-text="dbStats.total_reviews || 0"></div>
+                                <div class="text-sm text-gray-400">Total Reviews</div>
                             </div>
-                            <div class="flex justify-between">
-                                <span>TripAdvisor</span>
-                                <span class="text-blue-500" x-text="dbStats.by_source?.tripadvisor || 0"></span>
+                            <div>
+                                <div class="text-3xl font-bold text-blue-500" x-text="dbStats.distinct_operators || 0"></div>
+                                <div class="text-sm text-gray-400">Operators</div>
+                            </div>
+                            <div>
+                                <div class="text-3xl font-bold text-green-500" x-text="dbStats.countries_represented || 0"></div>
+                                <div class="text-sm text-gray-400">Countries</div>
+                            </div>
+                            <div>
+                                <div class="text-3xl font-bold text-purple-500" x-text="dbStats.avg_rating || '0.0'"></div>
+                                <div class="text-sm text-gray-400">Avg Rating</div>
                             </div>
                         </div>
                     </div>
-                    <div class="bg-gray-800 rounded-lg p-4">
-                        <h3 class="text-sm font-medium text-gray-400 mb-3">Top Countries</h3>
-                        <div class="space-y-1 text-sm">
-                            <template x-for="(count, country) in Object.entries(dbStats.top_countries || {}).slice(0, 5)" :key="country">
+
+                    <!-- Checkpoint Info -->
+                    <div x-show="checkpoint" class="bg-gray-800 rounded-lg p-4" x-cloak>
+                        <h3 class="text-xs font-medium text-gray-400 uppercase tracking-wide mb-3">Checkpoint</h3>
+                        <template x-if="checkpoint?.safaribookings">
+                            <div class="space-y-2 text-sm">
                                 <div class="flex justify-between">
-                                    <span x-text="country"></span>
-                                    <span class="text-gray-400" x-text="count"></span>
+                                    <span class="text-gray-400">Operators</span>
+                                    <span x-text="checkpoint.safaribookings.processed_urls?.length || 0"></span>
+                                </div>
+                                <div class="flex justify-between">
+                                    <span class="text-gray-400">Reviews</span>
+                                    <span x-text="checkpoint.safaribookings.total_reviews || 0"></span>
+                                </div>
+                                <button @click="clearProgress()" class="w-full mt-2 text-xs text-red-400 hover:text-red-300">
+                                    Clear Checkpoint
+                                </button>
+                            </div>
+                        </template>
+                    </div>
+                </div>
+
+                <!-- Main Content Area -->
+                <div class="col-span-3 space-y-6">
+                    <!-- Current Job Panel -->
+                    <div class="bg-gray-800 rounded-lg p-6">
+                        <h3 class="text-xs font-medium text-gray-400 uppercase tracking-wide mb-4">Current Job</h3>
+
+                        <template x-if="!isRunning">
+                            <div class="text-center py-8 text-gray-500">
+                                <svg class="w-12 h-12 mx-auto mb-3 opacity-50" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20 13V6a2 2 0 00-2-2H6a2 2 0 00-2 2v7m16 0v5a2 2 0 01-2 2H6a2 2 0 01-2-2v-5m16 0h-2.586a1 1 0 00-.707.293l-2.414 2.414a1 1 0 01-.707.293h-3.172a1 1 0 01-.707-.293l-2.414-2.414A1 1 0 006.586 13H4"/>
+                                </svg>
+                                <p>No active job</p>
+                                <p class="text-sm mt-1">Click "New Scrape" to start</p>
+                            </div>
+                        </template>
+
+                        <template x-if="isRunning">
+                            <div>
+                                <div class="flex items-center justify-between mb-4">
+                                    <div>
+                                        <span class="text-sm text-gray-400">Source:</span>
+                                        <span class="ml-2 text-amber-400 font-medium" x-text="status.config?.source || 'safaribookings'"></span>
+                                    </div>
+                                    <div class="flex items-center gap-2">
+                                        <span class="w-2 h-2 rounded-full bg-green-500 animate-pulse"></span>
+                                        <span class="text-sm text-green-400">Running</span>
+                                    </div>
+                                </div>
+
+                                <!-- Progress Bar -->
+                                <div class="mb-4">
+                                    <div class="flex justify-between text-sm mb-2">
+                                        <span class="text-gray-400">Progress</span>
+                                        <span x-text="`${status.current_operator_index || 0} / ${status.total_operators || '?'} operators`"></span>
+                                    </div>
+                                    <div class="w-full bg-gray-700 rounded-full h-3">
+                                        <div class="bg-amber-500 h-3 rounded-full transition-all duration-500" :style="`width: ${operatorProgress}%`"></div>
+                                    </div>
+                                </div>
+
+                                <!-- Current Operator -->
+                                <div class="bg-gray-700/50 rounded-lg p-4 mb-4">
+                                    <div class="text-sm text-gray-400 mb-1">Current Operator</div>
+                                    <div class="font-medium text-amber-400 truncate" x-text="currentOperatorName || 'Discovering operators...'"></div>
+                                    <div class="text-xs text-gray-500 mt-1 truncate" x-text="status.current_operator || ''"></div>
+                                </div>
+
+                                <!-- Stats Row -->
+                                <div class="grid grid-cols-3 gap-4 text-center">
+                                    <div class="bg-gray-700/50 rounded-lg p-3">
+                                        <div class="text-2xl font-bold text-green-500" x-text="status.total_reviews || 0"></div>
+                                        <div class="text-xs text-gray-400">Reviews</div>
+                                    </div>
+                                    <div class="bg-gray-700/50 rounded-lg p-3">
+                                        <div class="text-2xl font-bold text-blue-500" x-text="status.reviews_on_current_operator || 0"></div>
+                                        <div class="text-xs text-gray-400">This Operator</div>
+                                    </div>
+                                    <div class="bg-gray-700/50 rounded-lg p-3">
+                                        <div class="text-2xl font-bold text-purple-500" x-text="status.current_page || 1"></div>
+                                        <div class="text-xs text-gray-400">Page</div>
+                                    </div>
+                                </div>
+                            </div>
+                        </template>
+                    </div>
+
+                    <!-- Discovered Operators (during scrape) -->
+                    <div x-show="isRunning && discoveredOperators.length > 0" class="bg-gray-800 rounded-lg p-6" x-cloak>
+                        <div class="flex items-center justify-between mb-4">
+                            <h3 class="text-xs font-medium text-gray-400 uppercase tracking-wide">
+                                Discovered Operators (<span x-text="discoveredOperators.length"></span>)
+                            </h3>
+                            <div class="flex gap-2">
+                                <button @click="operatorFilter = 'all'"
+                                    :class="operatorFilter === 'all' ? 'bg-gray-600' : 'bg-gray-700 hover:bg-gray-600'"
+                                    class="px-2 py-1 text-xs rounded transition">All</button>
+                                <button @click="operatorFilter = 'completed'"
+                                    :class="operatorFilter === 'completed' ? 'bg-gray-600' : 'bg-gray-700 hover:bg-gray-600'"
+                                    class="px-2 py-1 text-xs rounded transition">Done</button>
+                                <button @click="operatorFilter = 'pending'"
+                                    :class="operatorFilter === 'pending' ? 'bg-gray-600' : 'bg-gray-700 hover:bg-gray-600'"
+                                    class="px-2 py-1 text-xs rounded transition">Pending</button>
+                            </div>
+                        </div>
+                        <div class="max-h-48 overflow-y-auto scrollbar-thin">
+                            <template x-for="(op, index) in filteredOperators" :key="index">
+                                <div class="flex items-center justify-between py-2 border-b border-gray-700 last:border-0">
+                                    <div class="flex items-center gap-3">
+                                        <span class="text-xs text-gray-500 w-6" x-text="index + 1"></span>
+                                        <span class="text-sm truncate max-w-xs" x-text="op.name"></span>
+                                    </div>
+                                    <span :class="{
+                                        'text-green-400': op.status === 'completed',
+                                        'text-amber-400': op.status === 'running',
+                                        'text-gray-500': op.status === 'pending',
+                                        'text-red-400': op.status === 'error'
+                                    }" class="text-xs" x-text="op.status === 'completed' ? `Done (${op.reviews})` : op.status"></span>
                                 </div>
                             </template>
                         </div>
                     </div>
+
+                    <!-- Activity Log -->
+                    <div class="bg-gray-800 rounded-lg p-6">
+                        <div class="flex items-center justify-between mb-4">
+                            <h3 class="text-xs font-medium text-gray-400 uppercase tracking-wide">Recent Activity</h3>
+                            <button @click="activityExpanded = !activityExpanded" class="text-xs text-gray-400 hover:text-gray-200">
+                                <span x-text="activityExpanded ? 'Collapse' : 'Expand'"></span>
+                            </button>
+                        </div>
+                        <div :class="activityExpanded ? 'max-h-96' : 'max-h-32'" class="overflow-y-auto scrollbar-thin transition-all">
+                            <template x-if="activityLog.length === 0">
+                                <p class="text-gray-500 text-sm">No activity yet</p>
+                            </template>
+                            <template x-for="(log, index) in activityLog" :key="index">
+                                <div class="flex items-start gap-3 py-1.5 text-sm">
+                                    <span class="text-gray-500 text-xs whitespace-nowrap w-16" x-text="formatTime(log.timestamp)"></span>
+                                    <span :class="{
+                                        'text-green-400': log.type === 'completed' || log.type === 'operator_completed',
+                                        'text-amber-400': log.type === 'started' || log.type === 'operator_started',
+                                        'text-red-400': log.type === 'error' || log.type === 'operator_error',
+                                        'text-blue-400': log.type === 'operators_discovered',
+                                        'text-gray-300': !['completed', 'operator_completed', 'started', 'operator_started', 'error', 'operator_error', 'operators_discovered'].includes(log.type)
+                                    }" x-text="log.message"></span>
+                                </div>
+                            </template>
+                        </div>
+                    </div>
+
+                    <!-- Run History -->
+                    <div class="bg-gray-800 rounded-lg p-6">
+                        <h3 class="text-xs font-medium text-gray-400 uppercase tracking-wide mb-4">Run History</h3>
+                        <template x-if="runHistory.length === 0">
+                            <p class="text-gray-500 text-sm text-center py-4">No previous runs</p>
+                        </template>
+                        <template x-if="runHistory.length > 0">
+                            <div class="overflow-x-auto">
+                                <table class="w-full text-sm">
+                                    <thead>
+                                        <tr class="text-left text-gray-400 border-b border-gray-700">
+                                            <th class="pb-2 font-medium">Started</th>
+                                            <th class="pb-2 font-medium">Duration</th>
+                                            <th class="pb-2 font-medium">Operators</th>
+                                            <th class="pb-2 font-medium">Reviews</th>
+                                            <th class="pb-2 font-medium">Status</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        <template x-for="run in runHistory" :key="run.id">
+                                            <tr class="border-b border-gray-700/50">
+                                                <td class="py-2" x-text="formatRunDate(run.started_at)"></td>
+                                                <td class="py-2" x-text="formatDuration(run.started_at, run.ended_at)"></td>
+                                                <td class="py-2" x-text="`${run.operators_completed || 0}/${run.operators_total || 0}`"></td>
+                                                <td class="py-2" x-text="run.reviews_collected || 0"></td>
+                                                <td class="py-2">
+                                                    <span :class="{
+                                                        'text-green-400': run.status === 'completed',
+                                                        'text-amber-400': run.status === 'running',
+                                                        'text-red-400': run.status === 'failed',
+                                                        'text-gray-400': run.status === 'stopped'
+                                                    }" x-text="run.status"></span>
+                                                </td>
+                                            </tr>
+                                        </template>
+                                    </tbody>
+                                </table>
+                            </div>
+                        </template>
+                    </div>
                 </div>
             </div>
-        </main>
+        </div>
+
+        <!-- ==================== OPERATORS TAB ==================== -->
+        <div x-show="activeTab === 'operators'" x-cloak class="p-6">
+            <div class="bg-gray-800 rounded-lg p-6">
+                <div class="flex items-center justify-between mb-6">
+                    <div>
+                        <h2 class="text-lg font-semibold">Tour Operators</h2>
+                        <p class="text-sm text-gray-400 mt-1">
+                            <span x-text="operators.total || 0"></span> operators |
+                            <span x-text="dbStats.total_reviews || 0"></span> total reviews
+                        </p>
+                    </div>
+                    <div class="flex gap-3">
+                        <input type="text" x-model="operators.search" @input.debounce.300ms="loadOperators()"
+                            placeholder="Search operators..."
+                            class="bg-gray-700 border border-gray-600 rounded px-3 py-2 text-sm focus:outline-none focus:border-amber-500 w-64">
+                        <select x-model="operators.sort" @change="loadOperators()"
+                            class="bg-gray-700 border border-gray-600 rounded px-3 py-2 text-sm focus:outline-none focus:border-amber-500">
+                            <option value="reviews">Most Reviews</option>
+                            <option value="rating">Highest Rated</option>
+                            <option value="name">Name A-Z</option>
+                        </select>
+                    </div>
+                </div>
+
+                <div class="overflow-x-auto">
+                    <table class="w-full text-sm">
+                        <thead>
+                            <tr class="text-left text-gray-400 border-b border-gray-700">
+                                <th class="pb-3 font-medium">Operator Name</th>
+                                <th class="pb-3 font-medium text-right">Reviews</th>
+                                <th class="pb-3 font-medium text-right">Avg Rating</th>
+                                <th class="pb-3 font-medium">Source</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <template x-for="op in operators.data" :key="op.operator_name">
+                                <tr @click="viewOperatorReviews(op.operator_name)"
+                                    class="border-b border-gray-700/50 hover:bg-gray-700/50 cursor-pointer transition">
+                                    <td class="py-3 font-medium" x-text="op.operator_name"></td>
+                                    <td class="py-3 text-right text-amber-400" x-text="op.review_count"></td>
+                                    <td class="py-3 text-right">
+                                        <span class="text-yellow-400" x-text="op.avg_rating?.toFixed(1) || '-'"></span>
+                                    </td>
+                                    <td class="py-3 text-gray-400" x-text="op.source || 'safaribookings'"></td>
+                                </tr>
+                            </template>
+                        </tbody>
+                    </table>
+                </div>
+
+                <!-- Pagination -->
+                <div class="flex items-center justify-between mt-6">
+                    <div class="text-sm text-gray-400">
+                        Showing <span x-text="operators.offset + 1"></span> - <span x-text="Math.min(operators.offset + operators.limit, operators.total)"></span> of <span x-text="operators.total"></span>
+                    </div>
+                    <div class="flex gap-2">
+                        <button @click="operators.offset = Math.max(0, operators.offset - operators.limit); loadOperators()"
+                            :disabled="operators.offset === 0"
+                            class="px-3 py-1 bg-gray-700 hover:bg-gray-600 disabled:opacity-50 disabled:cursor-not-allowed rounded text-sm transition">
+                            Previous
+                        </button>
+                        <button @click="operators.offset += operators.limit; loadOperators()"
+                            :disabled="operators.offset + operators.limit >= operators.total"
+                            class="px-3 py-1 bg-gray-700 hover:bg-gray-600 disabled:opacity-50 disabled:cursor-not-allowed rounded text-sm transition">
+                            Next
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- ==================== REVIEWS TAB ==================== -->
+        <div x-show="activeTab === 'reviews'" x-cloak class="p-6">
+            <div class="bg-gray-800 rounded-lg p-6">
+                <!-- Filters -->
+                <div class="flex flex-wrap gap-4 mb-6">
+                    <input type="text" x-model="reviews.search" @input.debounce.300ms="loadReviews()"
+                        placeholder="Search reviews..."
+                        class="bg-gray-700 border border-gray-600 rounded px-3 py-2 text-sm focus:outline-none focus:border-amber-500 flex-1 min-w-64">
+                    <select x-model="reviews.operator" @change="loadReviews()"
+                        class="bg-gray-700 border border-gray-600 rounded px-3 py-2 text-sm focus:outline-none focus:border-amber-500">
+                        <option value="">All Operators</option>
+                        <template x-for="op in operatorsList" :key="op">
+                            <option :value="op" x-text="op"></option>
+                        </template>
+                    </select>
+                    <select x-model="reviews.country" @change="loadReviews()"
+                        class="bg-gray-700 border border-gray-600 rounded px-3 py-2 text-sm focus:outline-none focus:border-amber-500">
+                        <option value="">All Countries</option>
+                        <template x-for="c in countriesList" :key="c">
+                            <option :value="c" x-text="c"></option>
+                        </template>
+                    </select>
+                    <select x-model="reviews.source" @change="loadReviews()"
+                        class="bg-gray-700 border border-gray-600 rounded px-3 py-2 text-sm focus:outline-none focus:border-amber-500">
+                        <option value="">All Sources</option>
+                        <option value="safaribookings">Safaribookings</option>
+                        <option value="tripadvisor">TripAdvisor</option>
+                    </select>
+                </div>
+
+                <!-- Reviews Table -->
+                <div class="overflow-x-auto">
+                    <table class="w-full text-sm">
+                        <thead>
+                            <tr class="text-left text-gray-400 border-b border-gray-700">
+                                <th class="pb-3 font-medium">Operator</th>
+                                <th class="pb-3 font-medium">Reviewer</th>
+                                <th class="pb-3 font-medium">Country</th>
+                                <th class="pb-3 font-medium text-center">Rating</th>
+                                <th class="pb-3 font-medium">Trip Type</th>
+                                <th class="pb-3 font-medium">Date</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <template x-for="review in reviews.data" :key="review.id">
+                                <tr @click="expandedReview = expandedReview === review.id ? null : review.id"
+                                    class="border-b border-gray-700/50 hover:bg-gray-700/50 cursor-pointer transition">
+                                    <td class="py-3 font-medium max-w-xs truncate" x-text="review.operator_name"></td>
+                                    <td class="py-3" x-text="review.reviewer_name || 'Anonymous'"></td>
+                                    <td class="py-3 text-gray-400" x-text="review.reviewer_country || '-'"></td>
+                                    <td class="py-3 text-center">
+                                        <span class="text-yellow-400" x-text="review.rating?.toFixed(1) || '-'"></span>
+                                    </td>
+                                    <td class="py-3 text-gray-400" x-text="review.trip_type || '-'"></td>
+                                    <td class="py-3 text-gray-400 text-xs" x-text="review.travel_date || review.review_date || '-'"></td>
+                                </tr>
+                                <!-- Expanded Review -->
+                                <tr x-show="expandedReview === review.id" class="bg-gray-700/30">
+                                    <td colspan="6" class="p-4">
+                                        <div class="text-sm">
+                                            <div class="font-medium text-amber-400 mb-2" x-text="review.title || 'No title'"></div>
+                                            <p class="text-gray-300 whitespace-pre-wrap" x-text="review.text || 'No review text'"></p>
+                                            <div class="mt-3 flex gap-4 text-xs text-gray-500">
+                                                <span x-show="review.guide_names_mentioned && review.guide_names_mentioned !== '[]'">
+                                                    Guides: <span class="text-gray-400" x-text="review.guide_names_mentioned"></span>
+                                                </span>
+                                                <span x-show="review.parks_visited && review.parks_visited !== '[]'">
+                                                    Parks: <span class="text-gray-400" x-text="review.parks_visited"></span>
+                                                </span>
+                                            </div>
+                                        </div>
+                                    </td>
+                                </tr>
+                            </template>
+                        </tbody>
+                    </table>
+                </div>
+
+                <!-- Pagination -->
+                <div class="flex items-center justify-between mt-6">
+                    <div class="text-sm text-gray-400">
+                        Showing <span x-text="reviews.offset + 1"></span> - <span x-text="Math.min(reviews.offset + reviews.limit, reviews.total)"></span> of <span x-text="reviews.total"></span>
+                    </div>
+                    <div class="flex gap-2">
+                        <button @click="reviews.offset = Math.max(0, reviews.offset - reviews.limit); loadReviews()"
+                            :disabled="reviews.offset === 0"
+                            class="px-3 py-1 bg-gray-700 hover:bg-gray-600 disabled:opacity-50 disabled:cursor-not-allowed rounded text-sm transition">
+                            Previous
+                        </button>
+                        <button @click="reviews.offset += reviews.limit; loadReviews()"
+                            :disabled="reviews.offset + reviews.limit >= reviews.total"
+                            class="px-3 py-1 bg-gray-700 hover:bg-gray-600 disabled:opacity-50 disabled:cursor-not-allowed rounded text-sm transition">
+                            Next
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- ==================== ANALYSIS TAB ==================== -->
+        <div x-show="activeTab === 'analysis'" x-cloak class="p-6">
+            <!-- Loading State -->
+            <div x-show="analysis.guideIntelligenceLoading" class="flex items-center justify-center py-12">
+                <div class="text-gray-400">Loading Guide Intelligence...</div>
+            </div>
+
+            <!-- Guide Intelligence Dashboard -->
+            <div x-show="!analysis.guideIntelligenceLoading && analysis.guideIntelligence">
+                <!-- Header -->
+                <div class="mb-6">
+                    <h2 class="text-xl font-semibold mb-1">Guide Intelligence Dashboard</h2>
+                    <p class="text-gray-400 text-sm">Understanding the impact of safari guides on traveler experiences</p>
+                </div>
+
+                <!-- Key Metrics Row -->
+                <div class="grid grid-cols-4 gap-4 mb-6">
+                    <!-- Guide Mention Rate -->
+                    <div class="bg-gray-800 rounded-lg p-5">
+                        <div class="text-xs font-medium text-gray-400 uppercase tracking-wide mb-2">Guide Mention Rate</div>
+                        <div class="text-3xl font-bold text-amber-500" x-text="`${analysis.guideIntelligence?.overview?.guide_mention_rate || 0}%`"></div>
+                        <div class="text-sm text-gray-400 mt-1">
+                            <span x-text="(analysis.guideIntelligence?.overview?.reviews_mentioning_guides || 0).toLocaleString()"></span> of
+                            <span x-text="(analysis.guideIntelligence?.overview?.total_reviews || 0).toLocaleString()"></span> reviews
+                        </div>
+                    </div>
+
+                    <!-- Rating Impact -->
+                    <div class="bg-gray-800 rounded-lg p-5">
+                        <div class="text-xs font-medium text-gray-400 uppercase tracking-wide mb-2">Rating Impact</div>
+                        <div class="text-3xl font-bold" :class="(analysis.guideIntelligence?.overview?.rating_impact || 0) >= 0 ? 'text-green-500' : 'text-red-500'">
+                            <span x-text="(analysis.guideIntelligence?.overview?.rating_impact || 0) >= 0 ? '+' : ''"></span><span x-text="analysis.guideIntelligence?.overview?.rating_impact || 0"></span>
+                        </div>
+                        <div class="text-sm text-gray-400 mt-1">
+                            With guides: <span x-text="analysis.guideIntelligence?.overview?.avg_rating_with_guide || 0"></span> avg
+                        </div>
+                    </div>
+
+                    <!-- Positive Sentiment -->
+                    <div class="bg-gray-800 rounded-lg p-5">
+                        <div class="text-xs font-medium text-gray-400 uppercase tracking-wide mb-2">Positive Sentiment</div>
+                        <div class="text-3xl font-bold text-green-500" x-text="`${analysis.guideIntelligence?.sentiment?.positive_rate || 0}%`"></div>
+                        <div class="text-sm text-gray-400 mt-1">
+                            <span x-text="(analysis.guideIntelligence?.sentiment?.positive || 0).toLocaleString()"></span> positive mentions
+                        </div>
+                    </div>
+
+                    <!-- Negative Sentiment -->
+                    <div class="bg-gray-800 rounded-lg p-5">
+                        <div class="text-xs font-medium text-gray-400 uppercase tracking-wide mb-2">Negative Mentions</div>
+                        <div class="text-3xl font-bold text-gray-300" x-text="analysis.guideIntelligence?.sentiment?.negative || 0"></div>
+                        <div class="text-sm text-gray-400 mt-1">
+                            <span x-text="((analysis.guideIntelligence?.sentiment?.negative || 0) / (analysis.guideIntelligence?.overview?.reviews_mentioning_guides || 1) * 100).toFixed(2)"></span>% of guide reviews
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Two Column Layout -->
+                <div class="grid grid-cols-2 gap-6 mb-6">
+                    <!-- Guide Qualities Chart -->
+                    <div class="bg-gray-800 rounded-lg p-5">
+                        <h3 class="text-sm font-medium text-gray-300 mb-4">Top Guide Qualities Valued by Travelers</h3>
+                        <div class="space-y-3">
+                            <template x-for="(item, index) in (analysis.guideIntelligence?.qualities || []).slice(0, 8)" :key="index">
+                                <div>
+                                    <div class="flex justify-between text-sm mb-1">
+                                        <span x-text="item.quality"></span>
+                                        <span class="text-gray-400" x-text="item.count.toLocaleString()"></span>
+                                    </div>
+                                    <div class="w-full bg-gray-700 rounded-full h-2">
+                                        <div class="bg-amber-500 h-2 rounded-full transition-all"
+                                             :style="`width: ${(item.count / (analysis.guideIntelligence?.qualities?.[0]?.count || 1) * 100)}%`"></div>
+                                    </div>
+                                </div>
+                            </template>
+                        </div>
+                    </div>
+
+                    <!-- Rating Distribution -->
+                    <div class="bg-gray-800 rounded-lg p-5">
+                        <h3 class="text-sm font-medium text-gray-300 mb-4">Rating Distribution (Guide-Mentioning Reviews)</h3>
+                        <div class="space-y-3">
+                            <template x-for="rating in ['5_stars', '4_stars', '3_stars', '2_stars', '1_star']" :key="rating">
+                                <div x-show="analysis.guideIntelligence?.rating_distribution?.[rating]">
+                                    <div class="flex justify-between text-sm mb-1">
+                                        <span x-text="rating.replace('_', ' ')"></span>
+                                        <span class="text-gray-400" x-text="(analysis.guideIntelligence?.rating_distribution?.[rating] || 0).toLocaleString()"></span>
+                                    </div>
+                                    <div class="w-full bg-gray-700 rounded-full h-2">
+                                        <div class="h-2 rounded-full transition-all"
+                                             :class="rating === '5_stars' ? 'bg-green-500' : rating === '4_stars' ? 'bg-green-400' : rating === '3_stars' ? 'bg-yellow-500' : 'bg-red-500'"
+                                             :style="`width: ${((analysis.guideIntelligence?.rating_distribution?.[rating] || 0) / (analysis.guideIntelligence?.overview?.reviews_mentioning_guides || 1) * 100)}%`"></div>
+                                    </div>
+                                </div>
+                            </template>
+                        </div>
+                        <div class="mt-4 pt-4 border-t border-gray-700">
+                            <div class="text-xs text-gray-400">
+                                <span class="text-green-500 font-medium" x-text="`${(((analysis.guideIntelligence?.rating_distribution?.['5_stars'] || 0) / (analysis.guideIntelligence?.overview?.reviews_mentioning_guides || 1)) * 100).toFixed(1)}%`"></span>
+                                of reviews mentioning guides are 5-star ratings
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Three Column Layout -->
+                <div class="grid grid-cols-3 gap-6 mb-6">
+                    <!-- Top Named Guides -->
+                    <div class="bg-gray-800 rounded-lg p-5">
+                        <h3 class="text-sm font-medium text-gray-300 mb-4">Most Mentioned Guides</h3>
+                        <div class="space-y-2 max-h-64 overflow-y-auto">
+                            <template x-for="(guide, index) in (analysis.guideIntelligence?.top_guides || []).slice(0, 15)" :key="index">
+                                <div class="flex items-center justify-between text-sm py-1">
+                                    <div class="flex items-center gap-2">
+                                        <span class="text-gray-500 w-5" x-text="index + 1"></span>
+                                        <span x-text="guide.name"></span>
+                                    </div>
+                                    <span class="text-gray-400" x-text="`${guide.mentions} mentions`"></span>
+                                </div>
+                            </template>
+                        </div>
+                    </div>
+
+                    <!-- Top Operators by Guide Quality -->
+                    <div class="bg-gray-800 rounded-lg p-5 col-span-2">
+                        <h3 class="text-sm font-medium text-gray-300 mb-4">Top Operators by Guide Experience</h3>
+                        <div class="overflow-x-auto">
+                            <table class="w-full text-sm">
+                                <thead>
+                                    <tr class="text-left text-gray-400 border-b border-gray-700">
+                                        <th class="pb-2 font-medium">#</th>
+                                        <th class="pb-2 font-medium">Operator</th>
+                                        <th class="pb-2 font-medium text-right">Reviews</th>
+                                        <th class="pb-2 font-medium text-right">Avg Rating</th>
+                                        <th class="pb-2 font-medium text-right">Positive %</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <template x-for="(op, index) in (analysis.guideIntelligence?.top_operators || []).slice(0, 10)" :key="index">
+                                        <tr class="border-b border-gray-700/50">
+                                            <td class="py-2 text-gray-500" x-text="index + 1"></td>
+                                            <td class="py-2">
+                                                <button @click="viewOperatorReviews(op.operator)" class="text-amber-500 hover:underline text-left" x-text="op.operator"></button>
+                                            </td>
+                                            <td class="py-2 text-right text-gray-400" x-text="op.reviews_with_guides"></td>
+                                            <td class="py-2 text-right">
+                                                <span :class="op.avg_rating >= 4.9 ? 'text-green-500' : op.avg_rating >= 4.5 ? 'text-green-400' : 'text-gray-300'" x-text="op.avg_rating"></span>
+                                            </td>
+                                            <td class="py-2 text-right">
+                                                <span class="text-green-500" x-text="`${op.positive_rate}%`"></span>
+                                            </td>
+                                        </tr>
+                                    </template>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Key Insight Banner -->
+                <div class="bg-gradient-to-r from-amber-900/30 to-amber-800/20 border border-amber-700/50 rounded-lg p-5">
+                    <h3 class="text-amber-400 font-medium mb-2">Key Insight</h3>
+                    <p class="text-gray-300">
+                        Guides are mentioned in <span class="text-amber-400 font-semibold" x-text="`${analysis.guideIntelligence?.overview?.guide_mention_rate || 0}%`"></span> of all reviews,
+                        with <span class="text-green-400 font-semibold" x-text="`${(((analysis.guideIntelligence?.rating_distribution?.['5_stars'] || 0) / (analysis.guideIntelligence?.overview?.reviews_mentioning_guides || 1)) * 100).toFixed(1)}%`"></span> resulting in 5-star ratings.
+                        The top valued qualities are <span class="text-amber-400 font-semibold" x-text="(analysis.guideIntelligence?.qualities || []).slice(0, 3).map(q => q.quality.toLowerCase()).join(', ')"></span>.
+                        Only <span class="text-green-400 font-semibold" x-text="analysis.guideIntelligence?.sentiment?.negative || 0"></span> reviews express negative guide sentiment,
+                        indicating guides are a critical success factor for safari experiences.
+                    </p>
+                </div>
+            </div>
+
+            <!-- Fallback: Original Analysis Cards -->
+            <div x-show="!analysis.guideIntelligenceLoading && !analysis.guideIntelligence" class="grid grid-cols-3 gap-6">
+                <!-- Demographics Card -->
+                <div class="bg-gray-800 rounded-lg p-6">
+                    <h3 class="text-xs font-medium text-gray-400 uppercase tracking-wide mb-4">Top Countries</h3>
+                    <div class="space-y-2">
+                        <template x-for="(count, country) in Object.entries(dbStats.top_countries || {}).slice(0, 5)" :key="country">
+                            <div class="flex justify-between text-sm">
+                                <span x-text="country"></span>
+                                <span class="text-gray-400" x-text="count"></span>
+                            </div>
+                        </template>
+                    </div>
+                </div>
+
+                <!-- Trip Types Card -->
+                <div class="bg-gray-800 rounded-lg p-6">
+                    <h3 class="text-xs font-medium text-gray-400 uppercase tracking-wide mb-4">Trip Types</h3>
+                    <div class="space-y-2">
+                        <template x-for="(count, type) in Object.entries(dbStats.trip_types || {}).slice(0, 5)" :key="type">
+                            <div class="flex justify-between text-sm">
+                                <span x-text="type"></span>
+                                <span class="text-gray-400" x-text="count"></span>
+                            </div>
+                        </template>
+                    </div>
+                </div>
+
+                <!-- Rating Distribution -->
+                <div class="bg-gray-800 rounded-lg p-6">
+                    <h3 class="text-xs font-medium text-gray-400 uppercase tracking-wide mb-4">Rating Distribution</h3>
+                    <div class="space-y-2">
+                        <template x-for="(count, range) in dbStats.rating_distribution || {}" :key="range">
+                            <div class="flex justify-between text-sm">
+                                <span x-text="range"></span>
+                                <span class="text-gray-400" x-text="count"></span>
+                            </div>
+                        </template>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- ==================== EXPORT TAB ==================== -->
+        <div x-show="activeTab === 'export'" x-cloak class="p-6">
+            <div class="bg-gray-800 rounded-lg p-6 max-w-2xl">
+                <h2 class="text-lg font-semibold mb-6">Export Data</h2>
+
+                <div class="space-y-6">
+                    <!-- Format Selection -->
+                    <div>
+                        <label class="block text-sm text-gray-400 mb-3">Format</label>
+                        <div class="flex gap-4">
+                            <label class="flex items-center gap-2 cursor-pointer">
+                                <input type="radio" x-model="exportConfig.format" value="csv" class="text-amber-500 focus:ring-amber-500">
+                                <span>CSV</span>
+                            </label>
+                            <label class="flex items-center gap-2 cursor-pointer">
+                                <input type="radio" x-model="exportConfig.format" value="json" class="text-amber-500 focus:ring-amber-500">
+                                <span>JSON</span>
+                            </label>
+                        </div>
+                    </div>
+
+                    <!-- Data Selection -->
+                    <div>
+                        <label class="block text-sm text-gray-400 mb-3">Include Data</label>
+                        <div class="space-y-2">
+                            <label class="flex items-center gap-2 cursor-pointer">
+                                <input type="checkbox" x-model="exportConfig.reviews" class="rounded text-amber-500 focus:ring-amber-500">
+                                <span>Reviews (<span x-text="dbStats.total_reviews || 0"></span>)</span>
+                            </label>
+                            <label class="flex items-center gap-2 cursor-pointer">
+                                <input type="checkbox" x-model="exportConfig.guideAnalysis" class="rounded text-amber-500 focus:ring-amber-500">
+                                <span>Guide Analysis</span>
+                            </label>
+                            <label class="flex items-center gap-2 cursor-pointer">
+                                <input type="checkbox" x-model="exportConfig.demographics" class="rounded text-amber-500 focus:ring-amber-500">
+                                <span>Demographics</span>
+                            </label>
+                            <label class="flex items-center gap-2 cursor-pointer">
+                                <input type="checkbox" x-model="exportConfig.decisionFactors" class="rounded text-amber-500 focus:ring-amber-500">
+                                <span>Decision Factors</span>
+                            </label>
+                        </div>
+                    </div>
+
+                    <!-- Download Button -->
+                    <button @click="downloadExport()"
+                        :disabled="!exportConfig.reviews && !exportConfig.guideAnalysis && !exportConfig.demographics && !exportConfig.decisionFactors"
+                        class="w-full bg-amber-600 hover:bg-amber-700 disabled:bg-gray-600 disabled:cursor-not-allowed text-white font-medium py-3 px-6 rounded-lg transition flex items-center justify-center gap-2">
+                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/>
+                        </svg>
+                        Download <span x-text="exportConfig.format.toUpperCase()"></span>
+                    </button>
+                </div>
+            </div>
+        </div>
+    </main>
+
+    <!-- ==================== NEW SCRAPE MODAL ==================== -->
+    <div x-show="showNewScrapeModal" x-cloak
+        class="fixed inset-0 bg-black/50 flex items-center justify-center z-50"
+        @click.self="showNewScrapeModal = false">
+        <div class="bg-gray-800 rounded-lg p-6 w-full max-w-lg mx-4">
+            <div class="flex items-center justify-between mb-6">
+                <h2 class="text-lg font-semibold">Start New Scrape</h2>
+                <button @click="showNewScrapeModal = false" class="text-gray-400 hover:text-white">
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
+                    </svg>
+                </button>
+            </div>
+
+            <div class="space-y-4">
+                <!-- Source -->
+                <div>
+                    <label class="block text-sm text-gray-400 mb-2">Source</label>
+                    <select x-model="config.source" @change="updatePreviewDebounced()" class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-sm focus:outline-none focus:border-amber-500">
+                        <option value="safaribookings">Safaribookings</option>
+                        <option value="tripadvisor">TripAdvisor</option>
+                    </select>
+                </div>
+
+                <!-- Max Operators -->
+                <div>
+                    <label class="block text-sm text-gray-400 mb-2">Max Operators</label>
+                    <input type="number" x-model.number="config.maxOperators" @input="updatePreviewDebounced()" min="1" max="1000"
+                        class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-sm focus:outline-none focus:border-amber-500">
+                </div>
+
+                <!-- Max Reviews -->
+                <div>
+                    <label class="block text-sm text-gray-400 mb-2">Max Reviews per Operator</label>
+                    <input type="number" x-model.number="config.maxReviews" min="1" max="1000"
+                        class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-sm focus:outline-none focus:border-amber-500">
+                </div>
+
+                <!-- Toggles -->
+                <div class="space-y-3">
+                    <label class="flex items-center gap-3 cursor-pointer">
+                        <input type="checkbox" x-model="config.headless" class="w-4 h-4 rounded bg-gray-700 border-gray-600 text-amber-500 focus:ring-amber-500">
+                        <span class="text-sm">Headless Mode</span>
+                    </label>
+                    <label class="flex items-center gap-3 cursor-pointer">
+                        <input type="checkbox" x-model="config.resume" @change="updatePreviewDebounced()" class="w-4 h-4 rounded bg-gray-700 border-gray-600 text-amber-500 focus:ring-amber-500">
+                        <span class="text-sm">Resume from Checkpoint</span>
+                    </label>
+                </div>
+
+                <!-- Scrape Preview Panel -->
+                <div class="bg-gray-700/50 rounded-lg p-4 text-sm">
+                    <div class="text-xs font-medium text-gray-400 uppercase tracking-wide mb-3">Scrape Preview</div>
+
+                    <!-- Loading State -->
+                    <div x-show="previewLoading" class="text-center py-2">
+                        <span class="text-gray-400">Analyzing...</span>
+                    </div>
+
+                    <!-- Preview Content -->
+                    <div x-show="!previewLoading && scrapePreview" x-cloak>
+                        <!-- Warning if no new data -->
+                        <div x-show="scrapePreview?.preview?.will_get_new_data === false"
+                            class="bg-red-900/50 border border-red-700 rounded-lg p-3 mb-3">
+                            <div class="flex items-start gap-2">
+                                <svg class="w-5 h-5 text-red-400 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/>
+                                </svg>
+                                <div>
+                                    <p class="text-red-300 font-medium">No New Data</p>
+                                    <p class="text-red-400 text-xs mt-1" x-text="scrapePreview?.recommendation?.message"></p>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Success message if will get new data -->
+                        <div x-show="scrapePreview?.preview?.will_get_new_data === true"
+                            class="bg-green-900/30 border border-green-700/50 rounded-lg p-3 mb-3">
+                            <div class="flex items-start gap-2">
+                                <svg class="w-5 h-5 text-green-400 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/>
+                                </svg>
+                                <p class="text-green-300 text-xs" x-text="scrapePreview?.recommendation?.message"></p>
+                            </div>
+                        </div>
+
+                        <!-- Stats Grid -->
+                        <div class="grid grid-cols-2 gap-3">
+                            <div class="bg-gray-800/50 rounded p-2">
+                                <div class="text-xs text-gray-500">Already Processed</div>
+                                <div class="text-lg font-semibold" x-text="scrapePreview?.checkpoint?.operators_processed || 0"></div>
+                                <div class="text-xs text-gray-500">operators</div>
+                            </div>
+                            <div class="bg-gray-800/50 rounded p-2">
+                                <div class="text-xs text-gray-500">Reviews Collected</div>
+                                <div class="text-lg font-semibold" x-text="scrapePreview?.checkpoint?.reviews_collected || 0"></div>
+                                <div class="text-xs text-gray-500">in checkpoint</div>
+                            </div>
+                            <div class="bg-gray-800/50 rounded p-2" :class="{'bg-green-900/30': scrapePreview?.preview?.new_operators > 0}">
+                                <div class="text-xs text-gray-500">New Operators</div>
+                                <div class="text-lg font-semibold" :class="{'text-green-400': scrapePreview?.preview?.new_operators > 0}" x-text="scrapePreview?.preview?.new_operators || 0"></div>
+                                <div class="text-xs text-gray-500">to scrape</div>
+                            </div>
+                            <div class="bg-gray-800/50 rounded p-2">
+                                <div class="text-xs text-gray-500">Will Skip</div>
+                                <div class="text-lg font-semibold text-gray-400" x-text="scrapePreview?.preview?.operators_to_skip || 0"></div>
+                                <div class="text-xs text-gray-500">already done</div>
+                            </div>
+                        </div>
+
+                        <!-- Suggestion if applicable -->
+                        <div x-show="scrapePreview?.preview?.will_get_new_data === false && scrapePreview?.recommendation?.suggested_max_operators"
+                            class="mt-3 flex items-center justify-between bg-amber-900/30 border border-amber-700/50 rounded p-2">
+                            <span class="text-xs text-amber-300">Suggested: <span x-text="scrapePreview?.recommendation?.suggested_max_operators"></span> operators</span>
+                            <button @click="config.maxOperators = scrapePreview.recommendation.suggested_max_operators; updatePreviewDebounced()"
+                                class="text-xs bg-amber-600 hover:bg-amber-700 text-white px-2 py-1 rounded transition">
+                                Apply
+                            </button>
+                        </div>
+
+                        <!-- Clear Progress Button -->
+                        <div x-show="scrapePreview?.checkpoint?.operators_processed > 0" class="mt-3 pt-3 border-t border-gray-600">
+                            <button @click="clearProgress()"
+                                class="text-xs text-gray-400 hover:text-red-400 transition flex items-center gap-1">
+                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/>
+                                </svg>
+                                Clear checkpoint and start fresh
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Actions -->
+                <div class="flex gap-3 pt-4">
+                    <button @click="showNewScrapeModal = false"
+                        class="flex-1 bg-gray-700 hover:bg-gray-600 text-white font-medium py-2 px-4 rounded-lg transition">
+                        Cancel
+                    </button>
+                    <button @click="startScrape(); showNewScrapeModal = false"
+                        :disabled="scrapePreview?.preview?.will_get_new_data === false"
+                        :class="scrapePreview?.preview?.will_get_new_data === false ? 'bg-gray-600 cursor-not-allowed' : 'bg-amber-600 hover:bg-amber-700'"
+                        class="flex-1 text-white font-medium py-2 px-4 rounded-lg transition">
+                        <span x-show="scrapePreview?.preview?.will_get_new_data !== false">Start Scraping</span>
+                        <span x-show="scrapePreview?.preview?.will_get_new_data === false">No New Data</span>
+                    </button>
+                </div>
+            </div>
+        </div>
     </div>
 
     <!-- Error Toast -->
-    <div x-show="error" x-transition class="fixed bottom-4 right-4 bg-red-600 text-white px-4 py-3 rounded-lg shadow-lg max-w-md" x-cloak>
+    <div x-show="error" x-transition class="fixed bottom-4 right-4 bg-red-600 text-white px-4 py-3 rounded-lg shadow-lg max-w-md z-50" x-cloak>
         <div class="flex items-start gap-3">
             <svg class="w-5 h-5 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
@@ -240,6 +925,6 @@
         </div>
     </div>
 
-    <script src="/static/js/app.js"></script>
+    <script src="/static/js/app.js?v=4"></script>
 </body>
 </html>

@@ -107,11 +107,40 @@ class Database:
                 )
             """)
 
+            # Scrape runs table for run history
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS scrape_runs (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    started_at TEXT NOT NULL,
+                    ended_at TEXT,
+                    status TEXT NOT NULL DEFAULT 'running',
+                    source TEXT,
+                    config_json TEXT,
+                    operators_total INTEGER DEFAULT 0,
+                    operators_completed INTEGER DEFAULT 0,
+                    reviews_collected INTEGER DEFAULT 0,
+                    errors_json TEXT DEFAULT '[]'
+                )
+            """)
+
             # Create indexes for common queries
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_reviews_source ON reviews(source)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_reviews_country ON reviews(reviewer_country)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_reviews_operator ON reviews(operator_name)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_reviews_scraped_at ON reviews(scraped_at)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_reviews_rating ON reviews(rating)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_reviews_id_desc ON reviews(id DESC)")
+
+            # Foreign key indexes for JOINs
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_guide_analysis_review_id ON guide_analysis(review_id)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_decision_factors_review_id ON decision_factors(review_id)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_demographics_review_id ON demographics(review_id)")
+
+            # Other indexes
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_guide_mentions ON guide_analysis(mentions_guide)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_demographics_region ON demographics(region)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_scrape_runs_status ON scrape_runs(status)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_scrape_runs_started_at ON scrape_runs(started_at DESC)")
 
             conn.commit()
 
@@ -274,6 +303,192 @@ class Database:
                 "avg_guide_sentiment": row[2] or 0,
             }
 
+    def get_guide_intelligence(self) -> dict:
+        """Get comprehensive guide intelligence analysis."""
+        import re
+        import json
+        from collections import Counter
+
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+
+            # Basic stats
+            cursor.execute("SELECT COUNT(*) FROM reviews")
+            total_reviews = cursor.fetchone()[0] or 0
+
+            cursor.execute("""
+                SELECT COUNT(*) FROM reviews
+                WHERE LOWER(text) LIKE '%guide%' OR LOWER(text) LIKE '%driver%'
+            """)
+            guide_mentions = cursor.fetchone()[0] or 0
+
+            # Rating comparison
+            cursor.execute("""
+                SELECT AVG(rating) FROM reviews
+                WHERE LOWER(text) LIKE '%guide%' OR LOWER(text) LIKE '%driver%'
+            """)
+            avg_with_guide = cursor.fetchone()[0] or 0
+
+            cursor.execute("""
+                SELECT AVG(rating) FROM reviews
+                WHERE LOWER(text) NOT LIKE '%guide%' AND LOWER(text) NOT LIKE '%driver%'
+            """)
+            avg_without_guide = cursor.fetchone()[0] or 0
+
+            # Rating distribution for guide-mentioning reviews
+            cursor.execute("""
+                SELECT
+                    CASE
+                        WHEN rating >= 4.5 THEN '5_stars'
+                        WHEN rating >= 3.5 THEN '4_stars'
+                        WHEN rating >= 2.5 THEN '3_stars'
+                        WHEN rating >= 1.5 THEN '2_stars'
+                        ELSE '1_star'
+                    END as rating_group,
+                    COUNT(*)
+                FROM reviews
+                WHERE LOWER(text) LIKE '%guide%' OR LOWER(text) LIKE '%driver%'
+                GROUP BY rating_group
+                ORDER BY rating_group DESC
+            """)
+            rating_distribution = {row[0]: row[1] for row in cursor.fetchall()}
+
+            # Get all review texts for quality analysis
+            cursor.execute("""
+                SELECT text, rating, operator_name, guide_names_mentioned
+                FROM reviews
+                WHERE text IS NOT NULL
+                AND (LOWER(text) LIKE '%guide%' OR LOWER(text) LIKE '%driver%')
+            """)
+            reviews_with_guides = cursor.fetchall()
+
+            # Quality patterns to extract
+            quality_patterns = [
+                (r'\b(knowledgeable|knowledge)\b', 'Knowledgeable'),
+                (r'\b(experienced|experience)\b', 'Experienced'),
+                (r'\b(friendly|warm|welcoming)\b', 'Friendly'),
+                (r'\b(professional|professionalism)\b', 'Professional'),
+                (r'\b(helpful|accommodating)\b', 'Helpful'),
+                (r'\b(patient|patience)\b', 'Patient'),
+                (r'\b(informative|explained|explaining)\b', 'Informative'),
+                (r'\b(punctual|on time|timely)\b', 'Punctual'),
+                (r'\b(safe|safety|careful)\b', 'Safety-conscious'),
+                (r'\b(spot|spotting|spotted)\b', 'Wildlife Spotting'),
+                (r'\b(passionate|enthusiasm|enthusiastic)\b', 'Passionate'),
+                (r'\b(recommend|recommended)\b', 'Highly Recommended'),
+            ]
+
+            # Sentiment phrases
+            positive_phrases = [
+                'excellent guide', 'amazing guide', 'best guide', 'fantastic guide',
+                'wonderful guide', 'great guide', 'incredible guide', 'outstanding guide',
+                'our guide was amazing', 'our guide was excellent', 'our guide was fantastic',
+                'highly recommend', 'special thanks', 'shout out to', 'hats off to',
+                'couldn\'t have asked for', 'above and beyond', 'made our trip',
+                'highlight of', 'best part of'
+            ]
+
+            negative_phrases = [
+                'poor guide', 'bad guide', 'disappointing guide', 'guide was rude',
+                'unprofessional', 'inexperienced', 'guide didn\'t', 'guide was late',
+                'wouldn\'t recommend', 'not happy with'
+            ]
+
+            # Analyze reviews
+            quality_counts = Counter()
+            positive_count = 0
+            negative_count = 0
+            neutral_count = 0
+            operator_guide_scores = {}
+            named_guides = Counter()
+
+            for text, rating, operator, guides_json in reviews_with_guides:
+                if not text:
+                    continue
+                text_lower = text.lower()
+
+                # Count qualities
+                for pattern, quality in quality_patterns:
+                    if re.search(pattern, text_lower):
+                        quality_counts[quality] += 1
+
+                # Sentiment analysis
+                has_positive = any(phrase in text_lower for phrase in positive_phrases)
+                has_negative = any(phrase in text_lower for phrase in negative_phrases)
+
+                if has_positive and not has_negative:
+                    positive_count += 1
+                elif has_negative and not has_positive:
+                    negative_count += 1
+                else:
+                    neutral_count += 1
+
+                # Operator scores
+                if operator:
+                    if operator not in operator_guide_scores:
+                        operator_guide_scores[operator] = {'total': 0, 'sum': 0, 'positive': 0}
+                    operator_guide_scores[operator]['total'] += 1
+                    operator_guide_scores[operator]['sum'] += rating or 0
+                    if has_positive:
+                        operator_guide_scores[operator]['positive'] += 1
+
+                # Named guides (filter out common false positives)
+                false_positives = {'who', 'you', 'and', 'the', 'our', 'we', 'they', 'he', 'she',
+                                   'it', 'was', 'were', 'been', 'being', 'have', 'has', 'had',
+                                   'success', 'gave', 'made', 'took', 'got', 'went', 'came'}
+                if guides_json:
+                    try:
+                        guides = json.loads(guides_json) if isinstance(guides_json, str) else guides_json
+                        for guide in guides:
+                            if guide and len(guide) > 2 and guide.lower() not in false_positives:
+                                named_guides[guide] += 1
+                    except:
+                        pass
+
+            # Calculate operator rankings
+            operator_rankings = []
+            for op, scores in operator_guide_scores.items():
+                if scores['total'] >= 5:  # Minimum 5 reviews
+                    avg_rating = scores['sum'] / scores['total']
+                    positive_rate = (scores['positive'] / scores['total']) * 100
+                    operator_rankings.append({
+                        'operator': op,
+                        'reviews_with_guides': scores['total'],
+                        'avg_rating': round(avg_rating, 2),
+                        'positive_rate': round(positive_rate, 1)
+                    })
+
+            operator_rankings.sort(key=lambda x: (x['positive_rate'], x['avg_rating']), reverse=True)
+
+            # Top guides
+            top_guides = [{'name': name, 'mentions': count}
+                          for name, count in named_guides.most_common(20)]
+
+            # Quality breakdown for chart
+            qualities = [{'quality': q, 'count': c}
+                         for q, c in quality_counts.most_common(12)]
+
+            return {
+                'overview': {
+                    'total_reviews': total_reviews,
+                    'reviews_mentioning_guides': guide_mentions,
+                    'guide_mention_rate': round((guide_mentions / total_reviews * 100), 1) if total_reviews else 0,
+                    'avg_rating_with_guide': round(avg_with_guide, 2) if avg_with_guide else 0,
+                    'avg_rating_without_guide': round(avg_without_guide, 2) if avg_without_guide else 0,
+                    'rating_impact': round((avg_with_guide - avg_without_guide), 2) if avg_with_guide and avg_without_guide else 0,
+                },
+                'sentiment': {
+                    'positive': positive_count,
+                    'negative': negative_count,
+                    'neutral': neutral_count,
+                    'positive_rate': round((positive_count / guide_mentions * 100), 1) if guide_mentions else 0,
+                },
+                'rating_distribution': rating_distribution,
+                'qualities': qualities,
+                'top_guides': top_guides,
+                'top_operators': operator_rankings[:10],
+            }
+
     def export_to_csv(self, output_path: str):
         """Export all data to CSV files."""
         import pandas as pd
@@ -335,3 +550,76 @@ class Database:
                 json.dump(demo, f, indent=2)
 
         return output_dir
+
+    # Scrape runs methods
+    def create_scrape_run(self, source: str, config: dict) -> int:
+        """Create a new scrape run record."""
+        import json
+        from datetime import datetime
+
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                INSERT INTO scrape_runs (started_at, status, source, config_json)
+                VALUES (?, 'running', ?, ?)
+            """, (datetime.now().isoformat(), source, json.dumps(config)))
+            conn.commit()
+            return cursor.lastrowid
+
+    def update_scrape_run(self, run_id: int, **kwargs):
+        """Update a scrape run record."""
+        import json
+        from datetime import datetime
+
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+
+            updates = []
+            values = []
+
+            if 'status' in kwargs:
+                updates.append("status = ?")
+                values.append(kwargs['status'])
+                if kwargs['status'] in ('completed', 'stopped', 'failed'):
+                    updates.append("ended_at = ?")
+                    values.append(datetime.now().isoformat())
+
+            if 'operators_total' in kwargs:
+                updates.append("operators_total = ?")
+                values.append(kwargs['operators_total'])
+
+            if 'operators_completed' in kwargs:
+                updates.append("operators_completed = ?")
+                values.append(kwargs['operators_completed'])
+
+            if 'reviews_collected' in kwargs:
+                updates.append("reviews_collected = ?")
+                values.append(kwargs['reviews_collected'])
+
+            if 'errors' in kwargs:
+                updates.append("errors_json = ?")
+                values.append(json.dumps(kwargs['errors']))
+
+            if updates:
+                values.append(run_id)
+                cursor.execute(f"""
+                    UPDATE scrape_runs SET {', '.join(updates)} WHERE id = ?
+                """, values)
+                conn.commit()
+
+    def get_scrape_runs(self, limit: int = 20) -> list:
+        """Get recent scrape runs."""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT * FROM scrape_runs ORDER BY started_at DESC LIMIT ?
+            """, (limit,))
+            return [dict(row) for row in cursor.fetchall()]
+
+    def get_scrape_run(self, run_id: int) -> Optional[dict]:
+        """Get a specific scrape run."""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT * FROM scrape_runs WHERE id = ?", (run_id,))
+            row = cursor.fetchone()
+            return dict(row) if row else None
