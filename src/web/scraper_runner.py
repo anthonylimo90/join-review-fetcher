@@ -313,17 +313,25 @@ class ScraperRunner:
 
                 processed_urls.add(url)
 
+                # Track operators scraped for adaptive rate limiting
+                self._scraper.operators_scraped = len(processed_urls)
+
                 # Save progress
                 self._scraper.save_progress({
                     "processed_urls": list(processed_urls),
                     "total_reviews": total_reviews,
                 })
 
-                # Rate limiting
-                if i > 50:
-                    await asyncio.sleep(5)
-                else:
-                    await self._scraper.random_delay()
+                # Browser restart every 50 operators to prevent memory leaks
+                if (i + 1) % 50 == 0 and i + 1 < len(operator_urls):
+                    self._sync_broadcast({
+                        "type": "browser_restart",
+                        "message": f"Restarting browser after {i + 1} operators to clear memory",
+                    })
+                    await self._scraper.restart_browser()
+
+                # Use adaptive rate limiting (slower as we scrape more)
+                await self._scraper.adaptive_delay()
 
             # Completed
             duration = (datetime.now() - self.status.started_at).total_seconds()

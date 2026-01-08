@@ -290,7 +290,10 @@ class SafaribookingsScraper(BaseScraper):
         base_url = f"{self.BASE_URL}/operators"
 
         print(f"Loading operators page: {base_url}", flush=True)
-        await self.page.goto(base_url, wait_until="domcontentloaded")
+        # Use safe_goto with retry logic
+        if not await self.safe_goto(base_url):
+            print(f"Failed to load operators page after retries")
+            return operators
         await asyncio.sleep(2)  # Wait for page to fully load
 
         # Dismiss cookie popup first
@@ -298,7 +301,9 @@ class SafaribookingsScraper(BaseScraper):
         await self.random_delay()
 
         if await self.check_for_captcha():
-            await self.handle_captcha()
+            if not await self.handle_captcha():
+                print("CAPTCHA timeout on operators page")
+                return operators
 
         page_num = 1
         while page_num <= max_pages:
@@ -337,22 +342,30 @@ class SafaribookingsScraper(BaseScraper):
             if next_link and page_num < max_pages:
                 try:
                     await next_link.click()
-                    await self.random_delay()
+                    await self.adaptive_delay()  # Use adaptive delay
                     page_num += 1
 
                     if await self.check_for_captcha():
-                        await self.handle_captcha()
+                        if not await self.handle_captcha():
+                            print("  CAPTCHA timeout during pagination")
+                            break
                 except Exception as e:
                     print(f"  Pagination error: {e}")
-                    break
+                    # Retry once after a longer delay
+                    await asyncio.sleep(5)
+                    try:
+                        await next_link.click()
+                        page_num += 1
+                    except Exception:
+                        break
             else:
                 break
 
-            if page_num % 3 == 0:
-                self.save_progress({
-                    "operator_urls": operators,
-                    "last_page": page_num,
-                })
+            # Save checkpoint every page (more frequent)
+            self.save_progress({
+                "operator_urls": operators,
+                "last_page": page_num,
+            })
 
         return operators
 
@@ -373,12 +386,11 @@ class SafaribookingsScraper(BaseScraper):
         reviews_url = f"{self.BASE_URL}/reviews/p{operator_id}"
 
         print(f"  Loading reviews page: {reviews_url}", flush=True)
-        try:
-            await self.page.goto(reviews_url, wait_until="domcontentloaded")
-            await asyncio.sleep(2)  # Wait for content to load
-        except Exception as e:
-            print(f"  Error loading {reviews_url}: {e}")
+        # Use safe_goto with retry logic
+        if not await self.safe_goto(reviews_url):
+            print(f"  Failed to load {reviews_url} after retries")
             return reviews
+        await asyncio.sleep(2)  # Wait for content to load
 
         print("  Page loaded, dismissing cookies...")
         # Dismiss cookie popup first
@@ -386,7 +398,10 @@ class SafaribookingsScraper(BaseScraper):
 
         print("  Checking for CAPTCHA...")
         if await self.check_for_captcha():
-            await self.handle_captcha()
+            if not await self.handle_captcha():
+                # CAPTCHA timeout - skip this operator
+                print("  Skipping operator due to CAPTCHA timeout")
+                return reviews
 
         # Get operator name from h1
         operator_name = ""
@@ -438,7 +453,7 @@ class SafaribookingsScraper(BaseScraper):
                 try:
                     print(f"  Navigating to page {page_num + 1}...")
                     await next_link.click()
-                    await self.random_delay()
+                    await self.adaptive_delay()  # Use adaptive delay
                     page_num += 1
                 except Exception as e:
                     print(f"  Pagination error: {e}")
@@ -447,12 +462,12 @@ class SafaribookingsScraper(BaseScraper):
                 print("  No more pages or max reviews reached")
                 break
 
-            if page_num % 2 == 0:
-                self.save_progress({
-                    "current_url": operator_url,
-                    "reviews_count": len(reviews),
-                    "page": page_num,
-                })
+            # Save checkpoint after EVERY page (not every 2)
+            self.save_progress({
+                "current_url": operator_url,
+                "reviews_count": len(reviews),
+                "page": page_num,
+            })
 
         print(f"  Total reviews extracted: {len(reviews)}")
         return reviews
