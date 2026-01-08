@@ -533,10 +533,34 @@ async def preview_scrape(
             "estimated_total_available": estimated_total_available,
             "will_get_new_data": new_operators > 0 and remaining_available > 0,
         },
+        "time_estimate": _calculate_time_estimate(min(new_operators, remaining_available)),
         "recommendation": {
             "suggested_max_operators": checkpoint_operators + 50 if resume else 50,
             "message": _get_preview_message(new_operators, remaining_available, resume, checkpoint_operators, max_operators),
         }
+    }
+
+
+def _calculate_time_estimate(num_operators: int) -> dict:
+    """Calculate estimated scrape time based on historical data."""
+    # Based on historical runs: ~0.55 minutes per operator average
+    minutes_per_operator = 0.55
+    total_minutes = num_operators * minutes_per_operator
+
+    hours = int(total_minutes // 60)
+    minutes = int(total_minutes % 60)
+
+    if hours > 0:
+        time_str = f"{hours}h {minutes}m"
+    elif minutes > 0:
+        time_str = f"{minutes}m"
+    else:
+        time_str = "< 1m"
+
+    return {
+        "minutes": round(total_minutes, 1),
+        "formatted": time_str,
+        "per_operator_mins": minutes_per_operator,
     }
 
 

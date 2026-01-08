@@ -115,6 +115,24 @@ function scraperApp() {
             return this.discoveredOperators.filter(op => op.status === this.operatorFilter);
         },
 
+        get estimatedTimeRemaining() {
+            if (!this.isRunning || !this.status.total_operators) return null;
+            const remaining = this.status.total_operators - (this.status.current_operator_index || 0);
+            if (remaining <= 0) return null;
+
+            // ~0.55 minutes per operator based on historical data
+            const minsRemaining = remaining * 0.55;
+            const hours = Math.floor(minsRemaining / 60);
+            const mins = Math.floor(minsRemaining % 60);
+
+            if (hours > 0) {
+                return `~${hours}h ${mins}m remaining`;
+            } else if (mins > 0) {
+                return `~${mins}m remaining`;
+            }
+            return '< 1m remaining';
+        },
+
         // Initialize
         async init() {
             this.connectWebSocket();

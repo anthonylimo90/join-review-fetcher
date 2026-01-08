@@ -178,6 +178,7 @@
                                     <div class="w-full bg-gray-700 rounded-full h-3">
                                         <div class="bg-amber-500 h-3 rounded-full transition-all duration-500" :style="`width: ${operatorProgress}%`"></div>
                                     </div>
+                                    <div x-show="estimatedTimeRemaining" class="text-xs text-blue-400 mt-2 text-right" x-text="estimatedTimeRemaining"></div>
                                 </div>
 
                                 <!-- Current Operator -->
@@ -859,10 +860,10 @@
                                 <div class="text-lg font-semibold" :class="{'text-green-400': scrapePreview?.preview?.new_operators > 0}" x-text="scrapePreview?.preview?.new_operators || 0"></div>
                                 <div class="text-xs text-gray-500">to scrape</div>
                             </div>
-                            <div class="bg-gray-800/50 rounded p-2">
-                                <div class="text-xs text-gray-500">Will Skip</div>
-                                <div class="text-lg font-semibold text-gray-400" x-text="scrapePreview?.preview?.operators_to_skip || 0"></div>
-                                <div class="text-xs text-gray-500">already done</div>
+                            <div class="bg-gray-800/50 rounded p-2" :class="{'bg-blue-900/30': scrapePreview?.time_estimate?.minutes > 0}">
+                                <div class="text-xs text-gray-500">Est. Time</div>
+                                <div class="text-lg font-semibold" :class="{'text-blue-400': scrapePreview?.time_estimate?.minutes > 0}" x-text="scrapePreview?.time_estimate?.formatted || '-'"></div>
+                                <div class="text-xs text-gray-500">duration</div>
                             </div>
                         </div>
 
