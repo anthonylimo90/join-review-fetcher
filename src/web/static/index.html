@@ -125,9 +125,9 @@
                     </svg>
                     <span x-text="isPaused ? 'Resume' : 'New Scrape'"></span>
                 </button>
-                <!-- Pause Button (visible when running) -->
-                <button @click="pauseScrape()" x-show="isRunning" x-cloak
-                    class="bg-yellow-600 hover:bg-yellow-700 text-white font-medium py-2 px-6 rounded-lg transition flex items-center gap-2">
+                <!-- Pause Button (always visible, disabled when not running) -->
+                <button @click="pauseScrape()" :disabled="!isRunning"
+                    class="bg-yellow-600 hover:bg-yellow-700 disabled:bg-gray-600 disabled:cursor-not-allowed text-white font-medium py-2 px-6 rounded-lg transition flex items-center gap-2">
                     <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 9v6m4-6v6m7-3a9 9 0 11-18 0 9 9 0 0118 0z"/>
                     </svg>
@@ -778,9 +778,18 @@
             <!-- Guide Intelligence Dashboard -->
             <div x-show="!analysis.guideIntelligenceLoading && analysis.guideIntelligence">
                 <!-- Header -->
-                <div class="mb-6">
-                    <h2 class="text-xl font-semibold mb-1">Guide Intelligence Dashboard</h2>
-                    <p class="text-gray-400 text-sm">Understanding the impact of safari guides on traveler experiences</p>
+                <div class="mb-6 flex items-center justify-between">
+                    <div>
+                        <h2 class="text-xl font-semibold mb-1">Guide Intelligence Dashboard</h2>
+                        <p class="text-gray-400 text-sm">Understanding the impact of safari guides on traveler experiences</p>
+                    </div>
+                    <button @click="refreshAnalysis()" :disabled="isRefreshingAnalysis"
+                        class="bg-blue-600 hover:bg-blue-700 disabled:bg-gray-600 disabled:cursor-not-allowed text-white font-medium py-2 px-4 rounded-lg transition flex items-center gap-2 text-sm">
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" :class="{ 'animate-spin': isRefreshingAnalysis }">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/>
+                        </svg>
+                        <span x-text="isRefreshingAnalysis ? 'Refreshing...' : 'Refresh'"></span>
+                    </button>
                 </div>
 
                 <!-- Key Metrics Row -->

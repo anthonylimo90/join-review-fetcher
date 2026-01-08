@@ -647,6 +647,14 @@ async def get_guide_intelligence():
     return result
 
 
+@router.post("/analysis/refresh")
+async def refresh_analysis():
+    """Clear analysis caches to force fresh data on next request."""
+    invalidate_analytics_cache()
+    cache.invalidate("guide_intelligence")
+    return {"status": "refreshed", "message": "Analysis cache cleared"}
+
+
 # ==================== EXPORT ENDPOINTS ====================
 
 @router.get("/export/csv")

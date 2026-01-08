@@ -118,6 +118,7 @@ function scraperApp() {
             guideIntelligence: null,
             guideIntelligenceLoading: false,
         },
+        isRefreshingAnalysis: false,
 
         // Export
         exportConfig: {
@@ -825,6 +826,33 @@ function scraperApp() {
                 console.error('Failed to load guide intelligence:', err);
             } finally {
                 this.analysis.guideIntelligenceLoading = false;
+            }
+        },
+
+        async refreshAnalysis() {
+            this.isRefreshingAnalysis = true;
+            try {
+                // Clear the cache on server
+                await fetch('/api/analysis/refresh', { method: 'POST' });
+                // Clear local cached data
+                this.analysis.guides = null;
+                this.analysis.guideIntelligence = null;
+                // Reload fresh data
+                await this.loadStats();
+                await this.loadGuideAnalysis();
+                // Force reload guide intelligence (bypass the early return)
+                this.analysis.guideIntelligenceLoading = true;
+                const response = await fetch('/api/analysis/guide-intelligence');
+                if (response.ok) {
+                    this.analysis.guideIntelligence = await response.json();
+                }
+                this.analysis.guideIntelligenceLoading = false;
+                this.addLog('info', 'Analysis refreshed');
+            } catch (err) {
+                this.error = err.message;
+                console.error('Failed to refresh analysis:', err);
+            } finally {
+                this.isRefreshingAnalysis = false;
             }
         },
 
