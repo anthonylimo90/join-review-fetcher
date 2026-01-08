@@ -57,6 +57,35 @@ function scraperApp() {
         dbStats: {},
         error: null,
 
+        // NEW: Phase tracking
+        currentPhase: 'idle', // 'idle' | 'discovering' | 'scraping' | 'completed'
+
+        // NEW: Time tracking
+        elapsedSeconds: 0,
+        elapsedTimer: null,
+
+        // NEW: Health monitoring
+        health: {
+            networkRetries: 0,
+            rateLimitMultiplier: 1.0,
+            operatorsSinceRestart: 0,
+        },
+
+        // NEW: CAPTCHA state
+        captchaDetected: false,
+        captchaDetectedAt: null,
+        captchaDismissed: false,
+
+        // NEW: Operator stats
+        operatorStats: {
+            success: 0,
+            error: 0,
+            skipped: 0,
+        },
+
+        // NEW: Guide tracking
+        guidesMentionedCount: 0,
+
         // Operators tab
         operators: {
             data: [],
@@ -120,17 +149,98 @@ function scraperApp() {
             const remaining = this.status.total_operators - (this.status.current_operator_index || 0);
             if (remaining <= 0) return null;
 
-            // ~0.55 minutes per operator based on historical data
-            const minsRemaining = remaining * 0.55;
+            // Use actual speed if available, otherwise historical average
+            const opsPerHour = this.operatorsPerHour;
+            let minsRemaining;
+
+            if (opsPerHour > 0) {
+                const hoursRemaining = remaining / opsPerHour;
+                minsRemaining = hoursRemaining * 60;
+            } else {
+                // Fallback: ~0.55 minutes per operator
+                minsRemaining = remaining * 0.55;
+            }
+
             const hours = Math.floor(minsRemaining / 60);
             const mins = Math.floor(minsRemaining % 60);
 
             if (hours > 0) {
-                return `~${hours}h ${mins}m remaining`;
+                return `~${hours}h ${mins}m`;
             } else if (mins > 0) {
-                return `~${mins}m remaining`;
+                return `~${mins}m`;
             }
-            return '< 1m remaining';
+            return '< 1m';
+        },
+
+        // NEW: Elapsed time formatted as HH:MM:SS
+        get elapsedTimeFormatted() {
+            const hours = Math.floor(this.elapsedSeconds / 3600);
+            const minutes = Math.floor((this.elapsedSeconds % 3600) / 60);
+            const seconds = this.elapsedSeconds % 60;
+            return `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
+        },
+
+        // NEW: Reviews per hour
+        get reviewsPerHour() {
+            if (!this.elapsedSeconds || this.elapsedSeconds < 60) return 0;
+            const hours = this.elapsedSeconds / 3600;
+            return Math.round((this.status.total_reviews || 0) / hours);
+        },
+
+        // NEW: Operators per hour
+        get operatorsPerHour() {
+            if (!this.elapsedSeconds || this.elapsedSeconds < 60) return 0;
+            const hours = this.elapsedSeconds / 3600;
+            return parseFloat(((this.status.current_operator_index || 0) / hours).toFixed(1));
+        },
+
+        // NEW: Parsing success rate
+        get parsingSuccessRate() {
+            const stats = this.status.parsing_stats;
+            if (!stats || !stats.successful) return 100;
+            const total = (stats.successful || 0) + (stats.failed || 0);
+            if (total === 0) return 100;
+            return ((stats.successful / total) * 100).toFixed(1);
+        },
+
+        // NEW: Operator breakdown percentages
+        get operatorSuccessPercent() {
+            const total = this.operatorStats.success + this.operatorStats.error + this.operatorStats.skipped;
+            return total > 0 ? (this.operatorStats.success / total) * 100 : 0;
+        },
+
+        get operatorErrorPercent() {
+            const total = this.operatorStats.success + this.operatorStats.error + this.operatorStats.skipped;
+            return total > 0 ? (this.operatorStats.error / total) * 100 : 0;
+        },
+
+        get operatorSkippedPercent() {
+            const total = this.operatorStats.success + this.operatorStats.error + this.operatorStats.skipped;
+            return total > 0 ? (this.operatorStats.skipped / total) * 100 : 0;
+        },
+
+        // NEW: Average reviews per operator
+        get avgReviewsPerOperator() {
+            const ops = this.operatorStats.success;
+            if (!ops) return 0;
+            return ((this.status.total_reviews || 0) / ops).toFixed(1);
+        },
+
+        // NEW: CAPTCHA time remaining
+        get captchaTimeRemaining() {
+            if (!this.captchaDetectedAt) return '';
+            const elapsed = Math.floor((Date.now() - this.captchaDetectedAt) / 1000);
+            const timeout = 600; // 10 minutes
+            const remaining = timeout - elapsed;
+            if (remaining <= 0) return 'Timeout!';
+            const mins = Math.floor(remaining / 60);
+            const secs = remaining % 60;
+            return `${mins}:${secs.toString().padStart(2, '0')}`;
+        },
+
+        // NEW: Browser restart countdown
+        get browserRestartCountdown() {
+            return 50 - (this.health.operatorsSinceRestart % 50);
         },
 
         // Initialize
@@ -243,6 +353,10 @@ function scraperApp() {
                     this.isRunning = true;
                     this.sleepPrevented = true;
                     this.discoveredOperators = [];
+                    // NEW: Reset and initialize scrape state
+                    this.resetScrapeState();
+                    this.currentPhase = 'discovering';
+                    this.startElapsedTimer();
                     this.addLog('started', `Scrape started: ${msg.config?.source}, max ${msg.config?.max_operators} operators`);
                     break;
 
@@ -256,6 +370,8 @@ function scraperApp() {
 
                 case 'operators_discovered':
                     this.status.total_operators = msg.to_scrape;
+                    // NEW: Transition to scraping phase
+                    this.currentPhase = 'scraping';
                     // Initialize discovered operators list
                     if (msg.operator_urls) {
                         this.discoveredOperators = msg.operator_urls.map(url => ({
@@ -265,7 +381,7 @@ function scraperApp() {
                             reviews: 0
                         }));
                     }
-                    this.addLog('operators_discovered', `Found ${msg.total} operators, scraping ${msg.to_scrape}`);
+                    this.addLog('operators_discovered', `Found ${msg.total} operators, scraping ${msg.to_scrape} (${msg.already_done || 0} already done)`);
                     break;
 
                 case 'operator_started':
@@ -273,6 +389,8 @@ function scraperApp() {
                     this.status.current_operator = msg.url;
                     this.status.current_page = 1;
                     this.status.reviews_on_current_operator = 0;
+                    // NEW: Track operators since last browser restart
+                    this.health.operatorsSinceRestart++;
                     // Update discovered operators list
                     this.updateOperatorStatus(msg.url, 'running');
                     this.addLog('operator_started', `[${msg.index}/${msg.total}] Starting: ${msg.name || msg.url}`);
@@ -289,17 +407,29 @@ function scraperApp() {
                     if (msg.parsing_stats) {
                         this.status.parsing_stats = msg.parsing_stats;
                     }
+                    // NEW: Track operator success
+                    this.operatorStats.success++;
+                    // NEW: Track guide mentions if provided
+                    if (msg.guides_mentioned) {
+                        this.guidesMentionedCount += msg.guides_mentioned;
+                    }
                     // Update discovered operators list
                     this.updateOperatorStatus(msg.url, 'completed', msg.reviews_extracted);
                     this.addLog('operator_completed', `[${msg.index}] Completed: ${msg.reviews_extracted} reviews`);
                     break;
 
                 case 'operator_error':
+                    // NEW: Track operator error
+                    this.operatorStats.error++;
                     this.updateOperatorStatus(msg.url, 'error');
                     this.addLog('error', `[${msg.index}] Error: ${msg.error}`);
                     break;
 
                 case 'captcha_detected':
+                    // NEW: Track CAPTCHA detection
+                    this.captchaDetected = true;
+                    this.captchaDetectedAt = Date.now();
+                    this.captchaDismissed = false;
                     this.addLog('error', 'CAPTCHA detected! Manual intervention required.');
                     this.error = msg.message;
                     break;
@@ -307,6 +437,10 @@ function scraperApp() {
                 case 'completed':
                     this.isRunning = false;
                     this.sleepPrevented = false;
+                    // NEW: Stop timer and set phase
+                    this.stopElapsedTimer();
+                    this.currentPhase = 'completed';
+                    this.captchaDetected = false;
                     const duration = Math.round(msg.duration_seconds / 60);
                     this.addLog('completed', `Scrape completed: ${msg.total_reviews} reviews in ${duration} minutes`);
                     this.loadStats();
@@ -320,6 +454,10 @@ function scraperApp() {
                 case 'stopped':
                     this.isRunning = false;
                     this.sleepPrevented = false;
+                    // NEW: Stop timer and reset phase
+                    this.stopElapsedTimer();
+                    this.currentPhase = 'idle';
+                    this.captchaDetected = false;
                     this.addLog('info', `Scrape stopped: ${msg.total_reviews || 0} reviews`);
                     this.loadRunHistory();
                     break;
@@ -329,6 +467,34 @@ function scraperApp() {
                     if (msg.requires_action) {
                         this.error = msg.message;
                     }
+                    break;
+
+                // NEW: Browser restart handler
+                case 'browser_restart':
+                    this.health.operatorsSinceRestart = 0;
+                    this.addLog('info', msg.message || 'Browser restarted');
+                    break;
+
+                // NEW: Rate limit change handler
+                case 'rate_limit_change':
+                    this.health.rateLimitMultiplier = msg.multiplier || 1.0;
+                    if (msg.multiplier > 1.5) {
+                        this.addLog('warning', `Rate limiting detected, delay multiplier: ${msg.multiplier.toFixed(1)}x`);
+                    }
+                    break;
+
+                // NEW: CAPTCHA solved handler
+                case 'captcha_solved':
+                    this.captchaDetected = false;
+                    this.captchaDetectedAt = null;
+                    this.captchaDismissed = false;
+                    this.addLog('info', 'CAPTCHA solved, resuming...');
+                    break;
+
+                // NEW: Network retry handler
+                case 'network_retry':
+                    this.health.networkRetries++;
+                    this.addLog('warning', `Network retry (${this.health.networkRetries}): ${msg.error || 'Connection error'}`);
                     break;
 
                 case 'status':
@@ -343,6 +509,47 @@ function scraperApp() {
                 op.status = status;
                 if (reviews) op.reviews = reviews;
             }
+        },
+
+        // NEW: Timer methods
+        startElapsedTimer() {
+            this.stopElapsedTimer(); // Clear any existing
+            this.elapsedSeconds = 0;
+            this.elapsedTimer = setInterval(() => {
+                this.elapsedSeconds++;
+            }, 1000);
+        },
+
+        stopElapsedTimer() {
+            if (this.elapsedTimer) {
+                clearInterval(this.elapsedTimer);
+                this.elapsedTimer = null;
+            }
+        },
+
+        // NEW: CAPTCHA methods
+        dismissCaptchaAlert() {
+            this.captchaDismissed = true;
+        },
+
+        // NEW: Phase helper
+        isPhaseComplete(phaseId) {
+            const phaseOrder = ['idle', 'discovering', 'scraping', 'completed'];
+            const currentIdx = phaseOrder.indexOf(this.currentPhase);
+            const checkIdx = phaseOrder.indexOf(phaseId);
+            return checkIdx < currentIdx && checkIdx > 0;
+        },
+
+        // NEW: Reset scrape state
+        resetScrapeState() {
+            this.currentPhase = 'idle';
+            this.elapsedSeconds = 0;
+            this.operatorStats = { success: 0, error: 0, skipped: 0 };
+            this.health = { networkRetries: 0, rateLimitMultiplier: 1.0, operatorsSinceRestart: 0 };
+            this.captchaDetected = false;
+            this.captchaDetectedAt = null;
+            this.captchaDismissed = false;
+            this.guidesMentionedCount = 0;
         },
 
         updateStatus(status) {
