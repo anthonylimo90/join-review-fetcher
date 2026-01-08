@@ -496,27 +496,27 @@ async def preview_scrape(
 
     # Estimate total operators available (SafariBookings has 3000+ tour operators)
     estimated_total_available = 3500 if source == "safaribookings" else 500
+    remaining_available = max(0, estimated_total_available - checkpoint_operators)
 
-    # Calculate how many would be new vs skipped
+    # Simple logic: user enters how many NEW operators they want
     if resume:
-        # With resume, we skip processed operators
-        operators_to_skip = min(checkpoint_operators, max_operators)
-        new_operators = max(0, max_operators - checkpoint_operators)
-
-        # If max_operators > checkpoint, we'll get (max - checkpoint) new ones
-        if max_operators <= checkpoint_operators:
-            new_operators = 0
-            operators_to_skip = max_operators
+        # User wants max_operators NEW operators, we skip already processed
+        new_operators = min(max_operators, remaining_available)
+        operators_to_skip = checkpoint_operators
+        # Actual limit to send to scraper = checkpoint + requested new
+        effective_max = checkpoint_operators + max_operators
     else:
-        # Without resume, all operators are "new" but might have duplicate reviews
+        # Without resume, start fresh - may re-scrape same operators
         new_operators = max_operators
         operators_to_skip = 0
+        effective_max = max_operators
 
-    remaining_available = max(0, estimated_total_available - checkpoint_operators)
+    will_get_new_data = new_operators > 0
 
     return {
         "source": source,
         "max_operators": max_operators,
+        "effective_max_operators": effective_max,  # What to actually send to scraper
         "resume": resume,
         "checkpoint": {
             "operators_processed": checkpoint_operators,
@@ -527,16 +527,15 @@ async def preview_scrape(
             "reviews": db_reviews,
         },
         "preview": {
-            "new_operators": min(new_operators, remaining_available),
+            "new_operators": new_operators,
             "operators_to_skip": operators_to_skip,
             "remaining_available": remaining_available,
             "estimated_total_available": estimated_total_available,
-            "will_get_new_data": new_operators > 0 and remaining_available > 0,
+            "will_get_new_data": will_get_new_data,
         },
-        "time_estimate": _calculate_time_estimate(min(new_operators, remaining_available)),
+        "time_estimate": _calculate_time_estimate(new_operators),
         "recommendation": {
-            "suggested_max_operators": checkpoint_operators + 50 if resume else 50,
-            "message": _get_preview_message(new_operators, remaining_available, resume, checkpoint_operators, max_operators),
+            "message": _get_preview_message_simple(new_operators, remaining_available, resume, checkpoint_operators),
         }
     }
 
@@ -564,22 +563,21 @@ def _calculate_time_estimate(num_operators: int) -> dict:
     }
 
 
-def _get_preview_message(new_operators: int, remaining: int, resume: bool, checkpoint: int, max_ops: int) -> str:
+def _get_preview_message_simple(new_operators: int, remaining: int, resume: bool, checkpoint: int) -> str:
     """Generate a helpful message about the scrape preview."""
     if not resume:
-        return "Resume disabled - will re-scrape operators (duplicates will be skipped)"
+        return "Resume disabled - will start from beginning (duplicate reviews will be skipped)"
 
     if checkpoint == 0:
-        return f"Fresh start - will scrape up to {max_ops} new operators"
-
-    if max_ops <= checkpoint:
-        return f"Warning: Max operators ({max_ops}) <= already processed ({checkpoint}). No new operators will be scraped. Increase to {checkpoint + 50} or more."
+        return f"Fresh start - will scrape {new_operators} operators"
 
     if remaining == 0:
         return "All available operators have been scraped!"
 
-    actual_new = min(new_operators, remaining)
-    return f"Will scrape {actual_new} new operators (skipping {checkpoint} already done)"
+    if new_operators == 0:
+        return "Enter number of new operators to scrape"
+
+    return f"Will scrape {new_operators} new operators (skipping {checkpoint} already done)"
 
 
 # ==================== RUN HISTORY ENDPOINTS ====================

@@ -781,11 +781,12 @@
                     </select>
                 </div>
 
-                <!-- Max Operators -->
+                <!-- Operators to Scrape -->
                 <div>
-                    <label class="block text-sm text-gray-400 mb-2">Max Operators</label>
+                    <label class="block text-sm text-gray-400 mb-2">Operators to Scrape</label>
                     <input type="number" x-model.number="config.maxOperators" @input="updatePreviewDebounced()" min="1" max="1000"
-                        class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-sm focus:outline-none focus:border-amber-500">
+                        class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-sm focus:outline-none focus:border-amber-500"
+                        placeholder="Number of new operators">
                 </div>
 
                 <!-- Max Reviews -->
@@ -867,14 +868,10 @@
                             </div>
                         </div>
 
-                        <!-- Suggestion if applicable -->
-                        <div x-show="scrapePreview?.preview?.will_get_new_data === false && scrapePreview?.recommendation?.suggested_max_operators"
-                            class="mt-3 flex items-center justify-between bg-amber-900/30 border border-amber-700/50 rounded p-2">
-                            <span class="text-xs text-amber-300">Suggested: <span x-text="scrapePreview?.recommendation?.suggested_max_operators"></span> operators</span>
-                            <button @click="config.maxOperators = scrapePreview.recommendation.suggested_max_operators; updatePreviewDebounced()"
-                                class="text-xs bg-amber-600 hover:bg-amber-700 text-white px-2 py-1 rounded transition">
-                                Apply
-                            </button>
+                        <!-- Remaining Available Info -->
+                        <div x-show="scrapePreview?.preview?.remaining_available > 0 && scrapePreview?.preview?.remaining_available < config.maxOperators"
+                            class="mt-3 text-xs text-amber-400">
+                            Note: Only <span x-text="scrapePreview?.preview?.remaining_available"></span> operators remaining to scrape
                         </div>
 
                         <!-- Clear Progress Button -->

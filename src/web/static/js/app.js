@@ -371,12 +371,18 @@ function scraperApp() {
         // API calls
         async startScrape() {
             try {
+                // Use effective_max_operators from preview when resuming
+                // This ensures "100 operators" means "100 NEW operators"
+                const effectiveMax = this.config.resume && this.scrapePreview?.effective_max_operators
+                    ? this.scrapePreview.effective_max_operators
+                    : this.config.maxOperators;
+
                 const response = await fetch('/api/scrape/start', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
                         source: this.config.source,
-                        max_operators: this.config.maxOperators,
+                        max_operators: effectiveMax,
                         max_reviews_per_operator: this.config.maxReviews,
                         headless: this.config.headless,
                         resume: this.config.resume,
