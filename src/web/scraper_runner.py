@@ -209,14 +209,33 @@ class ScraperRunner:
                 "message": "Fetching operator URLs..."
             })
 
-            operator_urls = await self._scraper.get_operator_urls(max_pages=20)
-            self.status.total_operators = min(len(operator_urls), config.max_operators)
+            # Calculate pages needed based on total operators we need to find
+            # (processed + requested new), with ~20 operators per page
+            total_needed = len(processed_urls) + config.max_operators
+            pages_needed = max(20, (total_needed // 15) + 5)
+
+            self._sync_broadcast({
+                "type": "discovering_operators",
+                "message": f"Scanning up to {pages_needed} listing pages..."
+            })
+
+            all_operator_urls = await self._scraper.get_operator_urls(max_pages=pages_needed)
+
+            # Filter out already processed operators to get NEW operators only
+            new_operator_urls = [url for url in all_operator_urls if url not in processed_urls]
+
+            # Limit to requested number of NEW operators
+            # config.max_operators is the user's requested NEW operator count
+            operator_urls = new_operator_urls[:config.max_operators]
+            self.status.total_operators = len(operator_urls)
 
             self._sync_broadcast({
                 "type": "operators_discovered",
-                "total": len(operator_urls),
+                "total": len(all_operator_urls),
+                "already_done": len(processed_urls),
+                "new_available": len(new_operator_urls),
                 "to_scrape": self.status.total_operators,
-                "operator_urls": operator_urls[:config.max_operators],
+                "operator_urls": operator_urls,
             })
 
             # Update run with operators total
@@ -226,13 +245,10 @@ class ScraperRunner:
                     operators_total=self.status.total_operators
                 )
 
-            # Scrape each operator
-            for i, url in enumerate(operator_urls[:config.max_operators]):
+            # Scrape each operator (operator_urls is already filtered to NEW operators only)
+            for i, url in enumerate(operator_urls):
                 if self.status.should_stop:
                     break
-
-                if url in processed_urls:
-                    continue
 
                 self.status.current_operator_index = i + 1
                 self.status.current_operator = url
