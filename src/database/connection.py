@@ -284,6 +284,44 @@ class Database:
                 cursor.execute("SELECT COUNT(*) FROM reviews")
             return cursor.fetchone()[0]
 
+    def get_operator_review_count(self, operator_name: str) -> int:
+        """Get review count for a specific operator."""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT COUNT(*) FROM reviews WHERE operator_name = ?",
+                (operator_name,)
+            )
+            return cursor.fetchone()[0]
+
+    def get_operator_review_urls(self, operator_name: str) -> set[str]:
+        """Get set of existing review URLs for an operator."""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT url FROM reviews WHERE operator_name = ?",
+                (operator_name,)
+            )
+            return {row[0] for row in cursor.fetchall()}
+
+    def get_all_operator_stats(self) -> dict[str, int]:
+        """Get review counts for all operators."""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT operator_name, COUNT(*) as review_count
+                FROM reviews
+                GROUP BY operator_name
+            """)
+            return {row[0]: row[1] for row in cursor.fetchall()}
+
+    def is_review_url_exists(self, url: str) -> bool:
+        """Check if a review URL already exists in the database."""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT 1 FROM reviews WHERE url = ? LIMIT 1", (url,))
+            return cursor.fetchone() is not None
+
     def get_guide_mention_stats(self) -> dict:
         """Get statistics on guide mentions."""
         with self._get_connection() as conn:

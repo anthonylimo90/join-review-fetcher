@@ -70,6 +70,7 @@ class ScrapeStartRequest(BaseModel):
     max_reviews_per_operator: int = 50
     headless: bool = True
     resume: bool = True
+    parallel_workers: int = 4  # Number of parallel browser contexts for faster scraping
 
 
 # ==================== STATUS ENDPOINTS ====================
@@ -413,6 +414,7 @@ async def start_scrape(request: ScrapeStartRequest):
         max_reviews_per_operator=request.max_reviews_per_operator,
         headless=request.headless,
         resume=request.resume,
+        parallel_workers=request.parallel_workers,
     )
 
     success = await scraper_runner.start_scrape(config)

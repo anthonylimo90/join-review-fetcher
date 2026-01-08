@@ -1,6 +1,7 @@
 """Safaribookings.com scraper - Enhanced with robust parsing and validation."""
 import asyncio
 import json
+import random
 import re
 from typing import Optional, AsyncIterator
 from urllib.parse import urljoin
@@ -16,17 +17,18 @@ from ..database.models import Review
 # Multi-strategy regex patterns for reviewer line parsing
 # Try in order - first match wins, with decreasing confidence
 # Note: Name pattern now requires proper name format (First Last or First L.)
+# PRE-COMPILED for performance (compiled once at module load)
 REVIEWER_PATTERNS = [
     # Pattern 1: Standard format with en-dash - strict name (First Last format)
-    (r"\n([A-Z][a-z]+(?:\s+[A-Z][a-z\.]+)?)\s+–\s+([A-Z]{2})\s+Visited:\s*(\w+\s+\d{4})\s+Reviewed:\s*([A-Za-z]+\s+\d+,?\s*\d{4})", 1.0),
+    (re.compile(r"\n([A-Z][a-z]+(?:\s+[A-Z][a-z\.]+)?)\s+–\s+([A-Z]{2})\s+Visited:\s*(\w+\s+\d{4})\s+Reviewed:\s*([A-Za-z]+\s+\d+,?\s*\d{4})"), 1.0),
     # Pattern 2: Hyphen instead of en-dash
-    (r"\n([A-Z][a-z]+(?:\s+[A-Z][a-z\.]+)?)\s+-\s+([A-Z]{2})\s+Visited:\s*(\w+\s+\d{4})\s+Reviewed:\s*([A-Za-z]+\s+\d+,?\s*\d{4})", 0.95),
+    (re.compile(r"\n([A-Z][a-z]+(?:\s+[A-Z][a-z\.]+)?)\s+-\s+([A-Z]{2})\s+Visited:\s*(\w+\s+\d{4})\s+Reviewed:\s*([A-Za-z]+\s+\d+,?\s*\d{4})"), 0.95),
     # Pattern 3: Em-dash
-    (r"\n([A-Z][a-z]+(?:\s+[A-Z][a-z\.]+)?)\s+—\s+([A-Z]{2})\s+Visited:\s*(\w+\s+\d{4})\s+Reviewed:\s*([A-Za-z]+\s+\d+,?\s*\d{4})", 0.95),
+    (re.compile(r"\n([A-Z][a-z]+(?:\s+[A-Z][a-z\.]+)?)\s+—\s+([A-Z]{2})\s+Visited:\s*(\w+\s+\d{4})\s+Reviewed:\s*([A-Za-z]+\s+\d+,?\s*\d{4})"), 0.95),
     # Pattern 4: More flexible name (allows hyphens, apostrophes in names)
-    (r"\n([A-Z][a-z]+(?:[-'][A-Z]?[a-z]+)?(?:\s+[A-Z][a-z\.]+)?)\s+[–—-]\s+([A-Z]{2})\s+Visited:\s*(\w+\s+\d{4})", 0.85),
+    (re.compile(r"\n([A-Z][a-z]+(?:[-'][A-Z]?[a-z]+)?(?:\s+[A-Z][a-z\.]+)?)\s+[–—-]\s+([A-Z]{2})\s+Visited:\s*(\w+\s+\d{4})"), 0.85),
     # Pattern 5: Name on separate line (fallback)
-    (r"\n([A-Z][a-z]+(?:\s+[A-Z][a-z\.]+)?)\n\s*([A-Z]{2})\s+Visited:\s*(\w+\s+\d{4})", 0.75),
+    (re.compile(r"\n([A-Z][a-z]+(?:\s+[A-Z][a-z\.]+)?)\n\s*([A-Z]{2})\s+Visited:\s*(\w+\s+\d{4})"), 0.75),
 ]
 
 # Wildlife keywords for extraction
@@ -40,6 +42,13 @@ WILDLIFE_KEYWORDS = {
               "kingfisher", "bee-eater", "roller", "stork", "heron", "pelican"],
 }
 
+# Pre-compiled wildlife regex for single-pass extraction (much faster than looping)
+_ALL_WILDLIFE = [animal for animals in WILDLIFE_KEYWORDS.values() for animal in animals]
+WILDLIFE_REGEX = re.compile(
+    r'\b(' + '|'.join(re.escape(a) for a in _ALL_WILDLIFE) + r')s?\b',
+    re.IGNORECASE
+)
+
 # Safari park names for extraction
 SAFARI_PARKS = [
     "masai mara", "maasai mara", "serengeti", "ngorongoro", "amboseli", "tsavo",
@@ -48,6 +57,12 @@ SAFARI_PARKS = [
     "samburu", "ol pejeta", "laikipia", "lewa", "meru", "selous", "ruaha",
     "mikumi", "katavi", "gombe", "mahale", "victoria falls", "livingstone",
 ]
+
+# Pre-compiled parks regex for single-pass extraction
+PARKS_REGEX = re.compile(
+    r'\b(' + '|'.join(re.escape(p) for p in SAFARI_PARKS) + r')\b',
+    re.IGNORECASE
+)
 
 # Trip type classification keywords
 TRIP_TYPES = {
@@ -62,6 +77,18 @@ TRIP_TYPES = {
     "birdwatching": ["birding", "birdwatching", "bird watching", "ornithology"],
 }
 
+# Pre-compiled guide name extraction patterns
+GUIDE_PATTERNS = [
+    re.compile(r"(?:our|the|my)\s+(?:guide|driver|ranger)[,\s]+([A-Z][a-z]+)", re.IGNORECASE),
+    re.compile(r"([A-Z][a-z]+)\s+(?:was|is)\s+(?:our|the|my|an?\s+(?:amazing|excellent|great|fantastic|wonderful))\s+(?:guide|driver|ranger)", re.IGNORECASE),
+    re.compile(r"(?:guide|driver|ranger)\s+(?:named|called)\s+([A-Z][a-z]+)", re.IGNORECASE),
+    re.compile(r"(?:thanks?\s+(?:to\s+)?|shout\s*out\s+(?:to\s+)?)([A-Z][a-z]+)", re.IGNORECASE),
+    re.compile(r"([A-Z][a-z]+)\s+(?:guided|drove|took)\s+us", re.IGNORECASE),
+]
+
+# Common false positive names to filter out
+GUIDE_NAME_BLACKLIST = frozenset(["the", "our", "was", "had", "very", "really", "great", "amazing"])
+
 
 class SafaribookingsScraper(BaseScraper):
     """Scraper for Safaribookings.com safari reviews with enhanced data extraction."""
@@ -73,6 +100,7 @@ class SafaribookingsScraper(BaseScraper):
         super().__init__(*args, **kwargs)
         self.validator = ReviewValidator()
         self.error_tracker = ParsingErrorTracker()
+        self._cookies_dismissed = False  # Track if we've already dismissed cookies this session
 
     @property
     def name(self) -> str:
@@ -81,58 +109,38 @@ class SafaribookingsScraper(BaseScraper):
     # ==================== Extraction Methods ====================
 
     def extract_wildlife_sightings(self, text: str) -> list[str]:
-        """Extract wildlife sightings from review text."""
+        """Extract wildlife sightings from review text using pre-compiled regex."""
         if not text:
             return []
 
-        sightings = []
-        text_lower = text.lower()
-
-        for category, animals in WILDLIFE_KEYWORDS.items():
-            for animal in animals:
-                # Check for singular and plural forms
-                if animal in text_lower or f"{animal}s" in text_lower:
-                    if animal not in sightings:
-                        sightings.append(animal)
-
-        return sightings
+        # Use pre-compiled regex for single-pass extraction (much faster)
+        matches = WILDLIFE_REGEX.findall(text)
+        # Return unique sightings, preserving lowercase for consistency
+        return list(set(match.lower() for match in matches))
 
     def extract_parks_visited(self, text: str) -> list[str]:
-        """Extract safari park names from review text."""
+        """Extract safari park names from review text using pre-compiled regex."""
         if not text:
             return []
 
-        parks = []
-        text_lower = text.lower()
-
-        for park in SAFARI_PARKS:
-            if park in text_lower:
-                # Capitalize properly
-                parks.append(park.title())
-
-        return parks
+        # Use pre-compiled regex for single-pass extraction
+        matches = PARKS_REGEX.findall(text)
+        # Return unique parks with proper capitalization
+        return list(set(match.title() for match in matches))
 
     def extract_guide_names(self, text: str) -> list[str]:
-        """Extract guide names mentioned in review text."""
+        """Extract guide names mentioned in review text using pre-compiled patterns."""
         if not text:
             return []
 
-        guide_patterns = [
-            r"(?:our|the|my)\s+(?:guide|driver|ranger)[,\s]+([A-Z][a-z]+)",
-            r"([A-Z][a-z]+)\s+(?:was|is)\s+(?:our|the|my|an?\s+(?:amazing|excellent|great|fantastic|wonderful))\s+(?:guide|driver|ranger)",
-            r"(?:guide|driver|ranger)\s+(?:named|called)\s+([A-Z][a-z]+)",
-            r"(?:thanks?\s+(?:to\s+)?|shout\s*out\s+(?:to\s+)?)([A-Z][a-z]+)",
-            r"([A-Z][a-z]+)\s+(?:guided|drove|took)\s+us",
-        ]
-
         names = []
-        for pattern in guide_patterns:
-            matches = re.findall(pattern, text, re.IGNORECASE)
+        for pattern in GUIDE_PATTERNS:
+            matches = pattern.findall(text)
             for match in matches:
                 name = match.strip().title()
                 # Filter out common false positives
                 if name and len(name) > 2 and name not in names:
-                    if name.lower() not in ["the", "our", "was", "had", "very", "really", "great", "amazing"]:
+                    if name.lower() not in GUIDE_NAME_BLACKLIST:
                         names.append(name)
 
         return names
@@ -242,8 +250,14 @@ class SafaribookingsScraper(BaseScraper):
         except Exception:
             return False
 
-    async def _dismiss_cookie_popup(self):
-        """Dismiss cookie consent popups."""
+    async def _dismiss_cookie_popup(self, page: Page = None):
+        """Dismiss cookie consent popups. Skips if already dismissed this session."""
+        # Skip if we've already successfully dismissed cookies
+        if self._cookies_dismissed:
+            return
+
+        target_page = page or self.page
+
         try:
             cookie_selectors = [
                 # Cookiebot (used by Safaribookings)
@@ -269,10 +283,11 @@ class SafaribookingsScraper(BaseScraper):
 
             for selector in cookie_selectors:
                 try:
-                    btn = await self.page.query_selector(selector)
+                    btn = await target_page.query_selector(selector)
                     if btn:
                         await btn.click()
-                        await asyncio.sleep(1)
+                        await asyncio.sleep(0.5)  # Reduced from 1s
+                        self._cookies_dismissed = True
                         print("  Dismissed cookie popup")
                         return
                 except Exception:
@@ -282,7 +297,45 @@ class SafaribookingsScraper(BaseScraper):
             pass
 
     async def get_operator_urls(self, max_pages: int = 10) -> list[str]:
-        """Get list of safari operator URLs from Safaribookings."""
+        """Get list of safari operator URLs from Safaribookings.
+
+        Uses fast HTTP method by default (10-20x faster), with browser fallback.
+        """
+        import sys
+
+        # Try fast HTTP method first (much faster than browser)
+        try:
+            from .http_helper import fetch_operator_urls_fast, is_http_available
+            if is_http_available():
+                print(f"[HTTP] Attempting fast HTTP operator discovery...", flush=True)
+                sys.stdout.flush()
+                operators = await fetch_operator_urls_fast(
+                    base_url=self.BASE_URL,
+                    max_pages=max_pages,
+                    timeout=30.0
+                )
+                if operators:
+                    print(f"[HTTP] Success! Found {len(operators)} operators via HTTP", flush=True)
+                    sys.stdout.flush()
+                    return operators
+                print("[HTTP] No operators found, falling back to browser...", flush=True)
+                sys.stdout.flush()
+        except ImportError as e:
+            print(f"[HTTP] Dependencies not available ({e}), using browser...", flush=True)
+            sys.stdout.flush()
+        except Exception as e:
+            import traceback
+            print(f"[HTTP] Failed with error: {type(e).__name__}: {e}", flush=True)
+            print(f"[HTTP] Traceback: {traceback.format_exc()}", flush=True)
+            sys.stdout.flush()
+
+        # Fallback to browser-based method
+        print("[HTTP] Using browser fallback for operator discovery...", flush=True)
+        sys.stdout.flush()
+        return await self._get_operator_urls_browser(max_pages)
+
+    async def _get_operator_urls_browser(self, max_pages: int = 10) -> list[str]:
+        """Get operator URLs using browser (fallback method)."""
         if not self.page:
             await self.start()
 
@@ -472,6 +525,186 @@ class SafaribookingsScraper(BaseScraper):
             })
 
         print(f"  Total reviews extracted: {len(reviews)}")
+        return reviews
+
+    async def scrape_reviews_with_page(
+        self, operator_url: str, page: Page, max_reviews: int = 100,
+        existing_urls: set[str] = None
+    ) -> list[Review]:
+        """Scrape reviews using a provided page (for parallel execution).
+
+        This method is used by parallel workers that each have their own browser context.
+
+        Args:
+            operator_url: URL of the operator
+            page: Playwright page to use
+            max_reviews: Maximum reviews to scrape
+            existing_urls: Set of review URLs already in database (to detect duplicates early)
+        """
+        reviews = []
+        existing_urls = existing_urls or set()
+        consecutive_duplicates = 0
+        MAX_CONSECUTIVE_DUPLICATES = 10  # Stop if we hit this many duplicates in a row
+
+        # Extract operator ID from URL (e.g., /p2606 -> 2606)
+        match = re.search(r"/p(\d+)", operator_url)
+        if not match:
+            print(f"Could not extract operator ID from {operator_url}")
+            return reviews
+
+        operator_id = match.group(1)
+        reviews_url = f"{self.BASE_URL}/reviews/p{operator_id}"
+
+        # Navigate using the provided page
+        try:
+            await page.goto(reviews_url, wait_until="domcontentloaded", timeout=self.timeout)
+            await asyncio.sleep(0.5)  # Reduced wait time
+        except Exception as e:
+            print(f"  Failed to load {reviews_url}: {e}")
+            return reviews
+
+        # Dismiss cookies on this page
+        await self._dismiss_cookie_popup(page)
+
+        # Get operator name from h1
+        operator_name = ""
+        try:
+            h1 = await page.query_selector("h1")
+            if h1:
+                operator_name = await h1.inner_text()
+                operator_name = re.sub(r"\s*reviews?\s*$", "", operator_name, flags=re.IGNORECASE).strip()
+        except Exception:
+            pass
+
+        page_num = 1
+        seen_urls = set()
+
+        while len(reviews) < max_reviews:
+            if self._stop_requested:
+                break
+
+            # Parse reviews from current page using the provided page
+            page_reviews = await self._parse_reviews_from_text_with_page(
+                page, operator_url, operator_name
+            )
+
+            if not page_reviews:
+                break
+
+            for review in page_reviews:
+                review_key = f"{review.reviewer_name}:{review.text[:50] if review.text else ''}"
+                if review_key not in seen_urls and review.text:
+                    seen_urls.add(review_key)
+
+                    # Check if this review already exists in database
+                    if review.url in existing_urls:
+                        consecutive_duplicates += 1
+                        if consecutive_duplicates >= MAX_CONSECUTIVE_DUPLICATES:
+                            # Stop early - we've hit too many consecutive duplicates
+                            # This means we're likely into reviews we already have
+                            return reviews
+                    else:
+                        consecutive_duplicates = 0  # Reset counter on new review
+                        reviews.append(review)
+
+                if len(reviews) >= max_reviews:
+                    break
+
+            # If we hit max duplicates, stop pagination
+            if consecutive_duplicates >= MAX_CONSECUTIVE_DUPLICATES:
+                break
+
+            # Check for next page
+            next_link = await page.query_selector(
+                "a:has-text('Next'), a:has-text('Page " + str(page_num + 1) + "'), "
+                "a.pagination-next, a[rel='next']"
+            )
+
+            if next_link and len(reviews) < max_reviews:
+                try:
+                    await next_link.click()
+                    await asyncio.sleep(random.uniform(self.min_delay, self.max_delay))
+                    page_num += 1
+                except Exception as e:
+                    break
+            else:
+                break
+
+        return reviews
+
+    async def _parse_reviews_from_text_with_page(
+        self, page: Page, operator_url: str, operator_name: str
+    ) -> list[Review]:
+        """Parse reviews from page text using provided page (for parallel execution)."""
+        reviews = []
+
+        try:
+            body = await page.query_selector("body")
+            if not body:
+                return reviews
+
+            full_text = await body.inner_text()
+
+            # Try multiple patterns with fallbacks
+            all_matches = []
+            used_positions = set()
+
+            for pattern, confidence in REVIEWER_PATTERNS:
+                try:
+                    matches = list(pattern.finditer(full_text))
+                    for m in matches:
+                        start_pos = m.start()
+                        if start_pos not in used_positions:
+                            all_matches.append((m, confidence, start_pos))
+                            used_positions.add(start_pos)
+                except Exception:
+                    continue
+
+            # Sort by position
+            all_matches.sort(key=lambda x: x[2])
+
+            # Extract reviews from matches
+            for i, (match, confidence, pos) in enumerate(all_matches):
+                try:
+                    groups = match.groups()
+                    if len(groups) >= 3:
+                        name = groups[0].strip()
+                        country_code = groups[1].upper() if groups[1] else ""
+                        travel_date_str = groups[2] if len(groups) > 2 else ""
+                        review_date_str = groups[3] if len(groups) > 3 else ""
+
+                        # Get review text
+                        end_pos = all_matches[i + 1][2] if i + 1 < len(all_matches) else len(full_text)
+                        review_text = full_text[match.end():end_pos].strip()
+
+                        # Clean up review text
+                        review_text = re.sub(r'\n{3,}', '\n\n', review_text)
+                        review_text = re.sub(r'Share this review.*$', '', review_text, flags=re.IGNORECASE)
+                        review_text = review_text.strip()
+
+                        if len(review_text) >= self.MIN_TEXT_LENGTH:
+                            # Generate unique review URL with reviewer name
+                            reviewer_slug = name.replace(' ', '-').lower()
+                            review_url = f"{operator_url}#review-{i+1}-{reviewer_slug}"
+
+                            review = Review(
+                                source="safaribookings",
+                                url=review_url,
+                                operator_name=operator_name,
+                                reviewer_name=name,
+                                reviewer_country=get_country_name(country_code),
+                                text=review_text,
+                                wildlife_sightings=json.dumps(self.extract_wildlife_sightings(review_text)),
+                                parks_visited=json.dumps(self.extract_parks_visited(review_text)),
+                                guide_names_mentioned=json.dumps(self.extract_guide_names(review_text)),
+                            )
+                            reviews.append(review)
+                except Exception:
+                    continue
+
+        except Exception as e:
+            print(f"    Parse error: {e}")
+
         return reviews
 
     async def _extract_reviews_from_page(

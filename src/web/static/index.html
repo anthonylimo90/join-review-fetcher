@@ -296,6 +296,13 @@
                             </div>
                             <div class="flex items-center justify-between">
                                 <div class="flex items-center gap-2">
+                                    <span class="w-2 h-2 rounded-full bg-purple-500"></span>
+                                    <span class="text-gray-400">Workers</span>
+                                </div>
+                                <span class="text-purple-400" x-text="activeWorkersCount + '/' + totalWorkers + ' active'"></span>
+                            </div>
+                            <div class="flex items-center justify-between">
+                                <div class="flex items-center gap-2">
                                     <span class="w-2 h-2 rounded-full bg-blue-500"></span>
                                     <span class="text-gray-400">Browser</span>
                                 </div>
@@ -391,8 +398,38 @@
                                     </div>
                                 </div>
 
-                                <!-- Current Operator -->
-                                <div class="bg-gray-700/50 rounded-lg p-4 mb-4">
+                                <!-- Parallel Workers Status -->
+                                <div x-show="totalWorkers > 1" class="bg-gray-700/50 rounded-lg p-4 mb-4" x-cloak>
+                                    <div class="flex items-center justify-between mb-2">
+                                        <div class="text-sm text-gray-400">Parallel Workers</div>
+                                        <div class="text-sm">
+                                            <span class="text-amber-400 font-medium" x-text="activeWorkersCount"></span>
+                                            <span class="text-gray-500">/</span>
+                                            <span class="text-gray-400" x-text="totalWorkers"></span>
+                                            <span class="text-gray-500 ml-1">active</span>
+                                        </div>
+                                    </div>
+                                    <!-- Active Workers Indicators -->
+                                    <div class="flex gap-1">
+                                        <template x-for="i in totalWorkers" :key="i">
+                                            <div class="flex-1 h-2 rounded-full transition-colors"
+                                                :class="i <= activeWorkersCount ? 'bg-amber-500 animate-pulse' : 'bg-gray-600'">
+                                            </div>
+                                        </template>
+                                    </div>
+                                    <!-- Active Operators List -->
+                                    <div x-show="activeWorkers.length > 0" class="mt-2 space-y-1" x-cloak>
+                                        <template x-for="url in activeWorkers.slice(0, 4)" :key="url">
+                                            <div class="text-xs text-gray-400 truncate flex items-center gap-1">
+                                                <span class="w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse"></span>
+                                                <span x-text="url.split('/').pop()"></span>
+                                            </div>
+                                        </template>
+                                    </div>
+                                </div>
+
+                                <!-- Current Operator (shown for single worker mode) -->
+                                <div x-show="totalWorkers <= 1" class="bg-gray-700/50 rounded-lg p-4 mb-4" x-cloak>
                                     <div class="text-sm text-gray-400 mb-1">Current Operator</div>
                                     <div class="font-medium text-amber-400 truncate" x-text="currentOperatorName || 'Discovering operators...'"></div>
                                     <div class="text-xs text-gray-500 mt-1 truncate" x-text="status.current_operator || ''"></div>
@@ -1089,6 +1126,17 @@
                         class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-sm focus:outline-none focus:border-amber-500">
                 </div>
 
+                <!-- Parallel Workers -->
+                <div>
+                    <label class="block text-sm text-gray-400 mb-2">Parallel Workers</label>
+                    <div class="flex items-center gap-4">
+                        <input type="range" x-model.number="config.parallelWorkers" min="1" max="8"
+                            class="flex-1 h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer accent-amber-500">
+                        <span class="text-amber-400 font-medium w-8 text-center" x-text="config.parallelWorkers"></span>
+                    </div>
+                    <p class="text-xs text-gray-500 mt-1">More workers = faster, but higher memory usage</p>
+                </div>
+
                 <!-- Toggles -->
                 <div class="space-y-3">
                     <label class="flex items-center gap-3 cursor-pointer">
@@ -1216,6 +1264,6 @@
         </div>
     </div>
 
-    <script src="/static/js/app.js?v=6"></script>
+    <script src="/static/js/app.js?v=8"></script>
 </body>
 </html>

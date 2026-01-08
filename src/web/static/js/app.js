@@ -25,6 +25,7 @@ function scraperApp() {
             maxReviews: 200,
             headless: true,
             resume: true,
+            parallelWorkers: 4,  // NEW: Parallel scraping workers
         },
 
         // Scraper Status
@@ -86,6 +87,10 @@ function scraperApp() {
 
         // NEW: Guide tracking
         guidesMentionedCount: 0,
+
+        // NEW: Parallel scraping tracking
+        activeWorkers: [],  // Currently scraping operators
+        totalWorkers: 4,    // Configured parallel workers
 
         // Operators tab
         operators: {
@@ -151,7 +156,7 @@ function scraperApp() {
             const remaining = this.status.total_operators - (this.status.current_operator_index || 0);
             if (remaining <= 0) return null;
 
-            // Use actual speed if available, otherwise historical average
+            // Use actual speed if available, otherwise estimate based on parallel workers
             const opsPerHour = this.operatorsPerHour;
             let minsRemaining;
 
@@ -159,8 +164,10 @@ function scraperApp() {
                 const hoursRemaining = remaining / opsPerHour;
                 minsRemaining = hoursRemaining * 60;
             } else {
-                // Fallback: ~0.55 minutes per operator
-                minsRemaining = remaining * 0.55;
+                // Fallback: ~0.15 minutes per operator with parallel scraping (was 0.55)
+                // Adjusted for 4x parallel + resource blocking + reduced delays
+                const baseTimePerOp = 0.55 / this.totalWorkers;  // ~0.14 min with 4 workers
+                minsRemaining = remaining * baseTimePerOp;
             }
 
             const hours = Math.floor(minsRemaining / 60);
@@ -243,6 +250,11 @@ function scraperApp() {
         // NEW: Browser restart countdown
         get browserRestartCountdown() {
             return 50 - (this.health.operatorsSinceRestart % 50);
+        },
+
+        // NEW: Active workers count
+        get activeWorkersCount() {
+            return this.activeWorkers.length;
         },
 
         // Initialize
@@ -383,7 +395,18 @@ function scraperApp() {
                             reviews: 0
                         }));
                     }
-                    this.addLog('operators_discovered', `Found ${msg.total} operators, scraping ${msg.to_scrape} (${msg.already_done || 0} already done)`);
+                    const skippedMsg = msg.skipped_full ? `, ${msg.skipped_full} fully scraped` : '';
+                    this.addLog('operators_discovered', `Found ${msg.total} operators, scraping ${msg.to_scrape} (${msg.already_done || 0} in progress${skippedMsg})`);
+                    break;
+
+                case 'checking_database':
+                    this.addLog('info', msg.message);
+                    break;
+
+                case 'parallel_scraping':
+                    // NEW: Parallel scraping mode started
+                    this.totalWorkers = msg.workers || 4;
+                    this.addLog('info', `Parallel scraping with ${this.totalWorkers} workers`);
                     break;
 
                 case 'operator_started':
@@ -393,6 +416,10 @@ function scraperApp() {
                     this.status.reviews_on_current_operator = 0;
                     // NEW: Track operators since last browser restart
                     this.health.operatorsSinceRestart++;
+                    // NEW: Track active workers for parallel scraping
+                    if (!this.activeWorkers.includes(msg.url)) {
+                        this.activeWorkers.push(msg.url);
+                    }
                     // Update discovered operators list
                     this.updateOperatorStatus(msg.url, 'running');
                     this.addLog('operator_started', `[${msg.index}/${msg.total}] Starting: ${msg.name || msg.url}`);
@@ -404,8 +431,9 @@ function scraperApp() {
                     break;
 
                 case 'operator_completed':
-                    this.status.reviews_on_current_operator = msg.reviews_extracted;
+                    this.status.reviews_on_current_operator = msg.new_reviews || msg.reviews_scraped || 0;
                     this.status.total_reviews = msg.total_reviews;
+                    this.status.current_operator_index = msg.index;  // Update progress
                     if (msg.parsing_stats) {
                         this.status.parsing_stats = msg.parsing_stats;
                     }
@@ -415,14 +443,24 @@ function scraperApp() {
                     if (msg.guides_mentioned) {
                         this.guidesMentionedCount += msg.guides_mentioned;
                     }
+                    // NEW: Remove from active workers
+                    this.activeWorkers = this.activeWorkers.filter(url => url !== msg.url);
                     // Update discovered operators list
-                    this.updateOperatorStatus(msg.url, 'completed', msg.reviews_extracted);
-                    this.addLog('operator_completed', `[${msg.index}] Completed: ${msg.reviews_extracted} reviews`);
+                    this.updateOperatorStatus(msg.url, 'completed', msg.new_reviews || msg.reviews_scraped);
+                    // Show new vs duplicate info
+                    const newCount = msg.new_reviews || 0;
+                    const dupCount = msg.duplicates_skipped || 0;
+                    const logMsg = dupCount > 0
+                        ? `[${msg.index}] Completed: ${newCount} new, ${dupCount} duplicates skipped`
+                        : `[${msg.index}] Completed: ${newCount} reviews`;
+                    this.addLog('operator_completed', logMsg);
                     break;
 
                 case 'operator_error':
                     // NEW: Track operator error
                     this.operatorStats.error++;
+                    // NEW: Remove from active workers
+                    this.activeWorkers = this.activeWorkers.filter(url => url !== msg.url);
                     this.updateOperatorStatus(msg.url, 'error');
                     this.addLog('error', `[${msg.index}] Error: ${msg.error}`);
                     break;
@@ -569,6 +607,7 @@ function scraperApp() {
             this.captchaDetectedAt = null;
             this.captchaDismissed = false;
             this.guidesMentionedCount = 0;
+            this.activeWorkers = [];  // Clear active workers
         },
 
         updateStatus(status) {
@@ -607,6 +646,7 @@ function scraperApp() {
                         max_reviews_per_operator: this.config.maxReviews,
                         headless: this.config.headless,
                         resume: this.config.resume,
+                        parallel_workers: this.config.parallelWorkers,  // NEW: Parallel workers
                     }),
                 });
 
@@ -617,6 +657,7 @@ function scraperApp() {
 
                 this.isRunning = true;
                 this.discoveredOperators = [];
+                this.totalWorkers = this.config.parallelWorkers;  // Store configured workers
             } catch (err) {
                 this.error = err.message;
             }

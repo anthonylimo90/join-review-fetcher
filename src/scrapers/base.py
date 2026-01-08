@@ -9,7 +9,7 @@ from typing import Optional, Callable, TypeVar
 from datetime import datetime
 from functools import wraps
 
-from playwright.async_api import async_playwright, Page, Browser, TimeoutError as PlaywrightTimeout
+from playwright.async_api import async_playwright, Page, Browser, BrowserContext, TimeoutError as PlaywrightTimeout
 
 
 # Custom exceptions
@@ -108,8 +108,8 @@ class BaseScraper(ABC):
     def __init__(
         self,
         headless: bool = True,
-        min_delay: float = 2.0,
-        max_delay: float = 5.0,
+        min_delay: float = 0.5,  # Reduced from 2.0 for faster scraping
+        max_delay: float = 1.5,  # Reduced from 5.0 for faster scraping
         timeout: int = 60000,  # Increased from 30s to 60s
     ):
         self.headless = headless
@@ -137,8 +137,8 @@ class BaseScraper(ABC):
 
     async def start(self):
         """Start the browser."""
-        playwright = await async_playwright().start()
-        self.browser = await playwright.chromium.launch(
+        self._playwright = await async_playwright().start()
+        self.browser = await self._playwright.chromium.launch(
             headless=self.headless,
             args=[
                 "--disable-blink-features=AutomationControlled",
@@ -149,8 +149,36 @@ class BaseScraper(ABC):
             viewport={"width": 1920, "height": 1080},
             user_agent="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
         )
+
+        # Block unnecessary resources for faster page loads
+        await self._setup_resource_blocking(context)
+
         self.page = await context.new_page()
         self.page.set_default_timeout(self.timeout)
+
+    async def _setup_resource_blocking(self, context: BrowserContext):
+        """Block images, CSS, fonts, and analytics for faster page loads."""
+        # Block images
+        await context.route("**/*.{png,jpg,jpeg,gif,svg,webp,ico}", lambda route: route.abort())
+        # Block CSS and fonts
+        await context.route("**/*.{css,woff,woff2,ttf,eot}", lambda route: route.abort())
+        # Block common analytics and tracking
+        await context.route("**/*google-analytics*", lambda route: route.abort())
+        await context.route("**/*googletagmanager*", lambda route: route.abort())
+        await context.route("**/*facebook*", lambda route: route.abort())
+        await context.route("**/*doubleclick*", lambda route: route.abort())
+        await context.route("**/*hotjar*", lambda route: route.abort())
+
+    async def create_context(self) -> tuple[BrowserContext, Page]:
+        """Create a new isolated browser context with resource blocking for parallel scraping."""
+        context = await self.browser.new_context(
+            viewport={"width": 1920, "height": 1080},
+            user_agent="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        )
+        await self._setup_resource_blocking(context)
+        page = await context.new_page()
+        page.set_default_timeout(self.timeout)
+        return context, page
 
     async def stop(self):
         """Stop the browser."""
@@ -172,13 +200,13 @@ class BaseScraper(ABC):
         base_delay = random.uniform(self.min_delay, self.max_delay)
 
         # Increase delay based on how many operators we've scraped
-        # This helps avoid rate limiting on long runs
+        # This helps avoid rate limiting on long runs (reduced multipliers for speed)
         if self.operators_scraped > 200:
-            multiplier = 2.5
+            multiplier = 1.5  # Was 2.5
         elif self.operators_scraped > 100:
-            multiplier = 2.0
+            multiplier = 1.25  # Was 2.0
         elif self.operators_scraped > 50:
-            multiplier = 1.5
+            multiplier = 1.0  # Was 1.5
         else:
             multiplier = 1.0
 

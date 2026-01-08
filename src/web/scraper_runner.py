@@ -20,6 +20,7 @@ class ScrapeConfig:
     max_reviews_per_operator: int = 200
     headless: bool = True
     resume: bool = True
+    parallel_workers: int = 4  # Number of parallel browser contexts for scraping
 
 
 @dataclass
@@ -221,8 +222,28 @@ class ScraperRunner:
 
             all_operator_urls = await self._scraper.get_operator_urls(max_pages=pages_needed)
 
-            # Filter out already processed operators to get NEW operators only
-            new_operator_urls = [url for url in all_operator_urls if url not in processed_urls]
+            # Load existing operator stats from database to skip fully-scraped operators
+            operator_stats = db.get_all_operator_stats()
+            self._sync_broadcast({
+                "type": "checking_database",
+                "message": f"Checking {len(operator_stats)} operators in database..."
+            })
+
+            # Filter operators:
+            # 1. Not in processed_urls (session checkpoint)
+            # 2. Not fully scraped (less than max_reviews in database)
+            new_operator_urls = []
+            skipped_full = 0
+            for url in all_operator_urls:
+                if url in processed_urls:
+                    continue
+                # Extract operator name from URL to check database
+                op_name = url.split("/")[-1] if "/" in url else url
+                existing_count = operator_stats.get(op_name, 0)
+                if existing_count >= config.max_reviews_per_operator:
+                    skipped_full += 1
+                    continue
+                new_operator_urls.append(url)
 
             # Limit to requested number of NEW operators
             # config.max_operators is the user's requested NEW operator count
@@ -233,6 +254,7 @@ class ScraperRunner:
                 "type": "operators_discovered",
                 "total": len(all_operator_urls),
                 "already_done": len(processed_urls),
+                "skipped_full": skipped_full,
                 "new_available": len(new_operator_urls),
                 "to_scrape": self.status.total_operators,
                 "operator_urls": operator_urls,
@@ -245,93 +267,115 @@ class ScraperRunner:
                     operators_total=self.status.total_operators
                 )
 
-            # Scrape each operator (operator_urls is already filtered to NEW operators only)
-            for i, url in enumerate(operator_urls):
-                if self.status.should_stop:
-                    break
+            # Scrape operators in parallel using worker pool
+            self._sync_broadcast({
+                "type": "parallel_scraping",
+                "message": f"Scraping with {config.parallel_workers} parallel workers...",
+                "workers": config.parallel_workers,
+            })
 
-                self.status.current_operator_index = i + 1
-                self.status.current_operator = url
-                self.status.current_page = 1
-                self.status.reviews_on_current_operator = 0
+            # Process operators in parallel batches
+            completed_count = 0
+            semaphore = asyncio.Semaphore(config.parallel_workers)
 
-                # Get operator name from URL
-                operator_name = url.split("/")[-1] if "/" in url else url
+            async def scrape_worker(url: str, index: int):
+                """Worker function to scrape a single operator."""
+                nonlocal total_reviews, completed_count
 
-                self._sync_broadcast({
-                    "type": "operator_started",
-                    "index": i + 1,
-                    "total": self.status.total_operators,
-                    "url": url,
-                    "name": operator_name,
-                })
+                async with semaphore:
+                    if self.status.should_stop:
+                        return None
 
-                try:
-                    reviews = await self._scrape_operator_with_progress(
-                        url, config.max_reviews_per_operator
-                    )
+                    operator_name = url.split("/")[-1] if "/" in url else url
 
-                    # Save reviews to database
-                    for review in reviews:
-                        db.insert_review(review)
-
-                    total_reviews += len(reviews)
-                    self.status.total_reviews = total_reviews
-                    self.status.reviews_on_current_operator = len(reviews)
-
-                    # Get parsing stats
-                    parsing_report = self._scraper.get_parsing_report()
-                    self.status.parsing_stats = parsing_report.get("stats", {})
+                    # Get existing review URLs for this operator to skip duplicates
+                    existing_urls = db.get_operator_review_urls(operator_name)
+                    existing_count = len(existing_urls)
 
                     self._sync_broadcast({
-                        "type": "operator_completed",
-                        "index": i + 1,
+                        "type": "operator_started",
+                        "index": index,
+                        "total": self.status.total_operators,
                         "url": url,
-                        "reviews_extracted": len(reviews),
-                        "total_reviews": total_reviews,
-                        "parsing_stats": self.status.parsing_stats,
+                        "name": operator_name,
+                        "existing_reviews": existing_count,
                     })
 
-                except Exception as e:
-                    error_msg = str(e)
-                    self.status.errors.append(error_msg)
+                    try:
+                        # Create isolated context for this worker
+                        context, page = await self._scraper.create_context()
 
-                    self._sync_broadcast({
-                        "type": "operator_error",
-                        "index": i + 1,
-                        "url": url,
-                        "error": error_msg,
-                    })
+                        try:
+                            reviews = await self._scraper.scrape_reviews_with_page(
+                                url, page, config.max_reviews_per_operator,
+                                existing_urls=existing_urls  # Pass existing URLs to skip duplicates
+                            )
 
-                    # Check if CAPTCHA
-                    if "captcha" in error_msg.lower():
+                            # Save reviews to database and count new ones
+                            new_reviews = 0
+                            for review in reviews:
+                                if review.url not in existing_urls:
+                                    db.insert_review(review)
+                                    new_reviews += 1
+
+                            completed_count += 1
+                            total_reviews += new_reviews  # Only count NEW reviews
+                            self.status.total_reviews = total_reviews
+                            self.status.current_operator_index = completed_count
+
+                            self._sync_broadcast({
+                                "type": "operator_completed",
+                                "index": index,
+                                "url": url,
+                                "reviews_scraped": len(reviews),
+                                "new_reviews": new_reviews,
+                                "duplicates_skipped": len(reviews) - new_reviews,
+                                "total_reviews": total_reviews,
+                            })
+
+                            return (url, len(reviews), None)
+
+                        finally:
+                            await context.close()
+
+                    except Exception as e:
+                        error_msg = str(e)
+                        self.status.errors.append(error_msg)
+
                         self._sync_broadcast({
-                            "type": "captcha_detected",
-                            "message": "CAPTCHA detected. Please solve it manually.",
-                            "requires_action": True,
+                            "type": "operator_error",
+                            "index": index,
+                            "url": url,
+                            "error": error_msg,
                         })
 
-                processed_urls.add(url)
+                        if "captcha" in error_msg.lower():
+                            self._sync_broadcast({
+                                "type": "captcha_detected",
+                                "message": "CAPTCHA detected. Please solve it manually.",
+                                "requires_action": True,
+                            })
 
-                # Track operators scraped for adaptive rate limiting
-                self._scraper.operators_scraped = len(processed_urls)
+                        return (url, 0, error_msg)
 
-                # Save progress
-                self._scraper.save_progress({
-                    "processed_urls": list(processed_urls),
-                    "total_reviews": total_reviews,
-                })
+            # Launch all workers
+            tasks = [
+                scrape_worker(url, i + 1)
+                for i, url in enumerate(operator_urls)
+            ]
+            results = await asyncio.gather(*tasks, return_exceptions=True)
 
-                # Browser restart every 50 operators to prevent memory leaks
-                if (i + 1) % 50 == 0 and i + 1 < len(operator_urls):
-                    self._sync_broadcast({
-                        "type": "browser_restart",
-                        "message": f"Restarting browser after {i + 1} operators to clear memory",
-                    })
-                    await self._scraper.restart_browser()
+            # Process results and save progress
+            for result in results:
+                if result and isinstance(result, tuple):
+                    url, review_count, error = result
+                    processed_urls.add(url)
 
-                # Use adaptive rate limiting (slower as we scrape more)
-                await self._scraper.adaptive_delay()
+            # Save final progress
+            self._scraper.save_progress({
+                "processed_urls": list(processed_urls),
+                "total_reviews": total_reviews,
+            })
 
             # Completed
             duration = (datetime.now() - self.status.started_at).total_seconds()
