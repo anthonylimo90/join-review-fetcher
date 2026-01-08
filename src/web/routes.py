@@ -446,6 +446,23 @@ async def stop_scrape():
     return {"status": "stopped"}
 
 
+@router.post("/scrape/pause")
+async def pause_scrape():
+    """Pause the current scrape job, saving checkpoint for later resume."""
+    if not scraper_runner.status.is_running:
+        raise HTTPException(status_code=400, detail="No scrape running")
+
+    success = await scraper_runner.pause_scrape()
+
+    if not success:
+        raise HTTPException(status_code=500, detail="Failed to pause scrape")
+
+    return {
+        "status": "paused",
+        "message": "Scrape paused. You can safely disconnect and resume later.",
+    }
+
+
 @router.post("/scrape/clear")
 async def clear_progress():
     """Clear scraper progress checkpoint."""

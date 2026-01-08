@@ -462,11 +462,13 @@ class SafaribookingsScraper(BaseScraper):
                 print("  No more pages or max reviews reached")
                 break
 
-            # Save checkpoint after EVERY page (not every 2)
+            # Save checkpoint after EVERY page (for pause/resume support)
             self.save_progress({
                 "current_url": operator_url,
+                "current_operator_name": operator_name,
                 "reviews_count": len(reviews),
                 "page": page_num,
+                "reviews_for_current_operator": len(reviews),
             })
 
         print(f"  Total reviews extracted: {len(reviews)}")

@@ -123,7 +123,15 @@
                     <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/>
                     </svg>
-                    New Scrape
+                    <span x-text="isPaused ? 'Resume' : 'New Scrape'"></span>
+                </button>
+                <!-- Pause Button (visible when running) -->
+                <button @click="pauseScrape()" x-show="isRunning" x-cloak
+                    class="bg-yellow-600 hover:bg-yellow-700 text-white font-medium py-2 px-6 rounded-lg transition flex items-center gap-2">
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 9v6m4-6v6m7-3a9 9 0 11-18 0 9 9 0 0118 0z"/>
+                    </svg>
+                    Pause
                 </button>
                 <button @click="stopScrape()" :disabled="!isRunning"
                     class="bg-red-600 hover:bg-red-700 disabled:bg-gray-600 disabled:cursor-not-allowed text-white font-medium py-2 px-6 rounded-lg transition flex items-center gap-2">
@@ -135,8 +143,26 @@
                 </button>
             </div>
 
-            <!-- Phase Indicator (visible during scrape) -->
-            <div x-show="isRunning || currentPhase === 'completed'" class="mb-6 bg-gray-800 rounded-lg p-4" x-cloak>
+            <!-- Paused Status Banner -->
+            <div x-show="isPaused" x-cloak class="mb-6 bg-amber-900/50 border border-amber-700 rounded-lg p-4">
+                <div class="flex items-center justify-between">
+                    <div class="flex items-center gap-3">
+                        <svg class="w-6 h-6 text-amber-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 9v6m4-6v6m7-3a9 9 0 11-18 0 9 9 0 0118 0z"/>
+                        </svg>
+                        <div>
+                            <div class="font-medium text-amber-400">Scrape Paused</div>
+                            <div class="text-sm text-gray-400">Safe to disconnect. Click "Resume" when ready to continue.</div>
+                        </div>
+                    </div>
+                    <button @click="openNewScrapeModal()" class="bg-amber-600 hover:bg-amber-700 text-white px-4 py-2 rounded-lg text-sm font-medium">
+                        Resume
+                    </button>
+                </div>
+            </div>
+
+            <!-- Phase Indicator (visible during scrape or paused) -->
+            <div x-show="isRunning || currentPhase === 'completed' || currentPhase === 'paused'" class="mb-6 bg-gray-800 rounded-lg p-4" x-cloak>
                 <div class="flex items-center justify-center gap-4">
                     <!-- Discovering Phase -->
                     <div class="flex items-center gap-2">
@@ -1181,6 +1207,6 @@
         </div>
     </div>
 
-    <script src="/static/js/app.js?v=5"></script>
+    <script src="/static/js/app.js?v=6"></script>
 </body>
 </html>

@@ -121,6 +121,7 @@ class BaseScraper(ABC):
         self.state = ScraperState()
         self._paused = False
         self._stop_requested = False
+        self._pause_requested = False  # For pause/resume functionality
 
         # Rate limiting state
         self.request_count = 0
@@ -248,12 +249,25 @@ class BaseScraper(ABC):
         return True
 
     def save_progress(self, data: dict):
-        """Save current progress for resume."""
+        """Save current progress for resume, including network state."""
+        # Include network state for proper resume
+        data.update({
+            "rate_limit_multiplier": self._rate_limit_multiplier,
+            "request_count": self.request_count,
+            "operators_scraped": self.operators_scraped,
+            "paused": self._pause_requested,
+        })
         self.state.save(self.name, data)
 
     def load_progress(self) -> Optional[dict]:
-        """Load saved progress."""
-        return self.state.load(self.name)
+        """Load saved progress and restore network state."""
+        data = self.state.load(self.name)
+        if data:
+            # Restore network state
+            self._rate_limit_multiplier = data.get("rate_limit_multiplier", 1.0)
+            self.request_count = data.get("request_count", 0)
+            self.operators_scraped = data.get("operators_scraped", 0)
+        return data
 
     def clear_progress(self):
         """Clear saved progress."""
@@ -262,6 +276,15 @@ class BaseScraper(ABC):
     def request_stop(self):
         """Request the scraper to stop gracefully."""
         self._stop_requested = True
+
+    def request_pause(self):
+        """Request the scraper to pause gracefully (saves detailed checkpoint)."""
+        self._pause_requested = True
+        self._stop_requested = True  # Also set stop flag to break loops
+
+    def is_pause_requested(self) -> bool:
+        """Check if pause was requested (vs regular stop)."""
+        return self._pause_requested
 
     async def restart_browser(self):
         """Restart browser to clear memory and reset state."""

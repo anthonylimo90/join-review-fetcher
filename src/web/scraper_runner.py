@@ -402,6 +402,54 @@ class ScraperRunner:
 
         return True
 
+    async def pause_scrape(self) -> bool:
+        """Pause the scraper, saving detailed checkpoint for resume."""
+        if not self.status.is_running:
+            return False
+
+        self.status.should_stop = True
+
+        if self._scraper:
+            self._scraper.request_pause()  # Sets both pause and stop flags
+
+        await self.broadcast_event({
+            "type": "pausing",
+            "message": "Saving checkpoint...",
+        })
+
+        # Wait for thread to finish (it will save checkpoint)
+        if self._thread and self._thread.is_alive():
+            self._thread.join(timeout=30)
+
+        # Get the saved checkpoint
+        checkpoint = None
+        if self._scraper:
+            checkpoint = self._scraper.load_progress()
+
+        # Update run as paused
+        if self.status.run_id:
+            db = Database()
+            db.update_scrape_run(
+                self.status.run_id,
+                status='paused',
+                reviews_collected=self.status.total_reviews,
+                operators_completed=self.status.current_operator_index,
+                errors=self.status.errors[-10:]
+            )
+
+        self.status.is_running = False
+        sleep_manager.stop()
+
+        await self.broadcast_event({
+            "type": "paused",
+            "message": "Scrape paused. You can safely disconnect.",
+            "total_reviews": self.status.total_reviews,
+            "operators_completed": self.status.current_operator_index,
+            "checkpoint": checkpoint,
+        })
+
+        return True
+
     def get_status(self) -> dict:
         """Get current scrape status."""
         return {

@@ -29,6 +29,7 @@ function scraperApp() {
 
         // Scraper Status
         isRunning: false,
+        isPaused: false,  // NEW: Pause state for pause/resume feature
         sleepPrevented: false,
         status: {
             current_operator_index: 0,
@@ -462,6 +463,22 @@ function scraperApp() {
                     this.loadRunHistory();
                     break;
 
+                // NEW: Pause handlers for pause/resume feature
+                case 'pausing':
+                    this.addLog('info', msg.message || 'Pausing scrape...');
+                    break;
+
+                case 'paused':
+                    this.isRunning = false;
+                    this.isPaused = true;
+                    this.sleepPrevented = false;
+                    this.stopElapsedTimer();
+                    this.currentPhase = 'paused';
+                    this.captchaDetected = false;
+                    this.addLog('info', msg.message || 'Scrape paused');
+                    this.loadRunHistory();
+                    break;
+
                 case 'error':
                     this.addLog('error', msg.message);
                     if (msg.requires_action) {
@@ -544,6 +561,7 @@ function scraperApp() {
         resetScrapeState() {
             this.currentPhase = 'idle';
             this.elapsedSeconds = 0;
+            this.isPaused = false;  // Clear pause state when starting new scrape
             this.operatorStats = { success: 0, error: 0, skipped: 0 };
             this.health = { networkRetries: 0, rateLimitMultiplier: 1.0, operatorsSinceRestart: 0 };
             this.captchaDetected = false;
@@ -610,6 +628,19 @@ function scraperApp() {
                     const data = await response.json();
                     throw new Error(data.detail || 'Failed to stop scrape');
                 }
+            } catch (err) {
+                this.error = err.message;
+            }
+        },
+
+        async pauseScrape() {
+            try {
+                const response = await fetch('/api/scrape/pause', { method: 'POST' });
+                if (!response.ok) {
+                    const data = await response.json();
+                    throw new Error(data.detail || 'Failed to pause scrape');
+                }
+                // isPaused will be set by WebSocket 'paused' event
             } catch (err) {
                 this.error = err.message;
             }
